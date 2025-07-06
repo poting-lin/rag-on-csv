@@ -1,0 +1,58 @@
+Timestamp,Location,DeviceID,DecibelsA,DecibelsC,FrequencyPeak,FrequencyRange,EventType,Duration,Notes
+2025-01-01 08:00:00,Urban Park,SM001,45.2,48.6,125,100-500,Ambient,300,Morning bird sounds
+2025-01-01 12:30:00,Urban Park,SM001,58.7,62.3,250,150-2000,Traffic,180,Nearby road traffic increased
+2025-01-01 17:45:00,Urban Park,SM001,65.3,68.9,500,200-3000,Event,120,Small community gathering
+2025-01-02 07:15:00,Urban Park,SM001,42.1,44.5,100,80-400,Ambient,240,Early morning quiet
+2025-01-02 13:00:00,Urban Park,SM001,59.8,63.2,300,200-1500,Construction,90,Construction work nearby
+2025-01-02 19:30:00,Urban Park,SM001,70.2,74.6,800,500-4000,Event,180,Evening concert
+2025-01-03 09:45:00,Urban Park,SM001,51.3,54.8,200,100-800,Recreation,120,Children playing
+2025-01-03 14:15:00,Urban Park,SM001,62.5,65.9,400,300-2000,Traffic,150,Rush hour traffic
+2025-01-03 20:00:00,Urban Park,SM001,48.7,51.2,150,100-600,Ambient,210,Evening ambient sounds
+2025-01-01 08:30:00,City Center,SM002,68.4,72.1,500,300-2000,Traffic,360,Morning rush hour
+2025-01-01 13:00:00,City Center,SM002,72.6,76.8,1000,500-4000,Construction,240,Building renovation nearby
+2025-01-01 18:15:00,City Center,SM002,75.3,79.7,1200,600-5000,Event,180,Street performance
+2025-01-02 07:45:00,City Center,SM002,60.2,63.8,400,200-1500,Traffic,300,Early commute
+2025-01-02 12:30:00,City Center,SM002,74.5,78.9,800,400-3000,Construction,210,Road work
+2025-01-02 19:00:00,City Center,SM002,79.8,84.2,2000,1000-8000,Event,240,Outdoor concert
+2025-01-03 09:00:00,City Center,SM002,71.3,75.6,600,300-2500,Traffic,270,Heavy traffic
+2025-01-03 14:45:00,City Center,SM002,73.9,78.2,900,500-3500,Construction,180,Demolition nearby
+2025-01-03 21:30:00,City Center,SM002,76.5,81.1,1500,800-6000,Event,300,Night festival
+2025-01-04 21:15:00,City Center,SM002,77.8,82.3,1600,850-6200,Event,320,Night festival
+2025-01-05 21:45:00,City Center,SM002,78.2,83.0,1550,820-6100,Event,310,Night festival
+2025-01-06 22:00:00,Urban Park,SM001,72.4,76.9,1400,750-5800,Event,290,Night festival
+2025-01-07 21:30:00,Urban Park,SM001,73.6,78.2,1450,780-5900,Event,305,Night festival
+2025-01-01 09:15:00,Residential Area,SM003,48.6,51.9,200,100-800,Ambient,330,Quiet neighborhood
+2025-01-01 13:45:00,Residential Area,SM003,55.3,58.7,300,150-1200,Domestic,150,Lawn mowing
+2025-01-01 19:30:00,Residential Area,SM003,52.1,55.4,250,120-1000,Recreation,180,Evening gathering
+2025-01-02 08:00:00,Residential Area,SM003,49.7,52.8,180,100-700,Ambient,270,Morning activities
+2025-01-02 14:15:00,Residential Area,SM003,58.4,62.1,350,200-1400,Construction,120,Home renovation
+2025-01-02 20:00:00,Residential Area,SM003,53.6,56.9,280,150-1100,Recreation,210,Backyard party
+2025-01-04 19:45:00,Residential Area,SM003,54.2,57.5,290,160-1150,Recreation,225,Backyard party
+2025-01-05 20:15:00,Residential Area,SM003,55.8,59.1,310,170-1200,Recreation,240,Backyard party
+2025-01-06 19:30:00,Residential Area,SM003,52.9,56.2,270,145-1050,Recreation,195,Backyard party
+2025-01-07 20:30:00,Residential Area,SM003,56.4,59.8,320,180-1250,Recreation,255,Backyard party
+2025-01-03 10:30:00,Residential Area,SM003,50.8,54.2,220,120-900,Domestic,180,Gardening activities
+2025-01-03 15:45:00,Residential Area,SM003,56.9,60.5,320,180-1300,Traffic,150,Increased street traffic
+2025-01-03 21:00:00,Residential Area,SM003,47.2,50.1,160,90-650,Ambient,240,Night ambient sounds
+2025-01-01 07:00:00,Industrial Zone,SM004,75.8,81.3,800,400-3000,Industrial,360,Factory operations start
+2025-01-01 12:00:00,Industrial Zone,SM004,82.4,87.9,1500,800-6000,Industrial,300,Peak production hours
+2025-01-01 17:00:00,Industrial Zone,SM004,79.1,84.5,1200,600-5000,Industrial,240,Shift change
+2025-01-02 06:45:00,Industrial Zone,SM004,74.6,80.1,750,400-3000,Industrial,330,Early shift start
+2025-01-02 13:30:00,Industrial Zone,SM004,83.7,89.2,1600,900-6500,Industrial,270,Heavy machinery operation
+2025-01-02 18:45:00,Industrial Zone,SM004,77.9,83.2,1100,500-4500,Industrial,210,Evening operations
+2025-01-03 08:15:00,Industrial Zone,SM004,76.3,81.8,900,450-3500,Industrial,300,Morning operations
+2025-01-03 14:00:00,Industrial Zone,SM004,84.2,89.8,1700,1000-7000,Industrial,240,Peak production
+2025-01-03 19:30:00,Industrial Zone,SM004,78.5,83.9,1300,700-5500,Industrial,180,Operations winding down
+2025-01-04 07:00:00,Industrial Zone,SM004,76.2,81.5,820,410-3100,Industrial,350,Factory operations start
+2025-01-05 06:50:00,Industrial Zone,SM004,75.5,80.9,790,400-3050,Industrial,370,Factory operations start
+2025-01-06 07:15:00,Industrial Zone,SM004,76.8,82.1,830,420-3200,Industrial,345,Factory operations start
+2025-01-07 06:45:00,Industrial Zone,SM004,75.9,81.4,810,405-3080,Industrial,355,Factory operations start
+2025-01-04 10:00:00,Concert Hall,SM005,45.3,47.8,100,50-400,Ambient,120,Empty hall baseline
+2025-01-04 14:30:00,Concert Hall,SM005,68.7,72.4,500,300-2000,Rehearsal,180,Orchestra rehearsal
+2025-01-04 19:00:00,Concert Hall,SM005,92.5,98.1,2000,1000-8000,Performance,240,Classical concert
+2025-01-05 11:15:00,Concert Hall,SM005,47.6,50.2,120,60-500,Ambient,150,Pre-event setup
+2025-01-05 15:45:00,Concert Hall,SM005,72.3,76.8,600,400-2500,Rehearsal,210,Sound check
+2025-01-05 20:00:00,Concert Hall,SM005,95.8,101.4,2500,1200-10000,Performance,270,Rock concert
+2025-01-06 09:30:00,Concert Hall,SM005,46.1,48.5,110,50-450,Ambient,180,Maintenance activities
+2025-01-06 16:00:00,Concert Hall,SM005,70.9,75.2,550,350-2200,Rehearsal,240,Band rehearsal
+2025-01-06 20:30:00,Concert Hall,SM005,94.1,99.7,2200,1100-9000,Performance,300,Jazz festival

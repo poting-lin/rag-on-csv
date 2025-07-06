@@ -1,0 +1,101 @@
+BookID,Title,Author,Price,PublishYear
+B001,The Great Gatsby,F. Scott Fitzgerald,12.99,1925
+B002,To Kill a Mockingbird,Harper Lee,14.50,1960
+B003,1984,George Orwell,11.75,1949
+B004,Pride and Prejudice,Jane Austen,9.99,1813
+B005,The Catcher in the Rye,J.D. Salinger,10.50,1951
+B006,The Hobbit,J.R.R. Tolkien,15.99,1937
+B007,Brave New World,Aldous Huxley,12.25,1932
+B008,The Lord of the Rings,J.R.R. Tolkien,24.99,1954
+B009,Animal Farm,George Orwell,8.75,1945
+B010,The Chronicles of Narnia,C.S. Lewis,18.50,1950
+B011,The Grapes of Wrath,John Steinbeck,13.99,1939
+B012,Moby Dick,Herman Melville,12.50,1851
+B013,Jane Eyre,Charlotte Brontë,10.99,1847
+B014,Wuthering Heights,Emily Brontë,9.75,1847
+B015,The Odyssey,Homer,8.99,1614
+B016,Don Quixote,Miguel de Cervantes,14.25,1605
+B017,War and Peace,Leo Tolstoy,19.99,1869
+B018,Crime and Punishment,Fyodor Dostoevsky,13.50,1866
+B019,The Divine Comedy,Dante Alighieri,15.75,1320
+B020,The Brothers Karamazov,Fyodor Dostoevsky,16.99,1880
+B021,Ulysses,James Joyce,17.50,1922
+B022,Madame Bovary,Gustave Flaubert,11.25,1856
+B023,The Adventures of Huckleberry Finn,Mark Twain,10.75,1884
+B024,Alice's Adventures in Wonderland,Lewis Carroll,9.50,1865
+B025,The Iliad,Homer,8.99,1598
+B026,Les Misérables,Victor Hugo,18.75,1862
+B027,One Hundred Years of Solitude,Gabriel García Márquez,14.99,1967
+B028,The Sound and the Fury,William Faulkner,13.25,1929
+B029,Hamlet,William Shakespeare,7.99,1603
+B030,The Scarlet Letter,Nathaniel Hawthorne,9.25,1850
+B031,Heart of Darkness,Joseph Conrad,8.50,1899
+B032,The Picture of Dorian Gray,Oscar Wilde,11.99,1890
+B033,The Count of Monte Cristo,Alexandre Dumas,16.50,1844
+B034,Anna Karenina,Leo Tolstoy,15.25,1877
+B035,The Old Man and the Sea,Ernest Hemingway,9.99,1952
+B036,The Alchemist,Paulo Coelho,12.75,1988
+B037,The Little Prince,Antoine de Saint-Exupéry,8.25,1943
+B038,The Stranger,Albert Camus,10.50,1942
+B039,The Trial,Franz Kafka,11.25,1925
+B040,The Metamorphosis,Franz Kafka,7.99,1915
+B041,Frankenstein,Mary Shelley,10.25,1818
+B042,Dracula,Bram Stoker,11.50,1897
+B043,The Shining,Stephen King,14.99,1977
+B044,It,Stephen King,16.75,1986
+B045,The Stand,Stephen King,18.50,1978
+B046,Dune,Frank Herbert,13.99,1965
+B047,Foundation,Isaac Asimov,12.50,1951
+B048,Neuromancer,William Gibson,11.75,1984
+B049,Snow Crash,Neal Stephenson,13.25,1992
+B050,The Hitchhiker's Guide to the Galaxy,Douglas Adams,10.99,1979
+B051,Slaughterhouse-Five,Kurt Vonnegut,11.50,1969
+B052,Catch-22,Joseph Heller,12.99,1961
+B053,The Handmaid's Tale,Margaret Atwood,14.75,1985
+B054,Beloved,Toni Morrison,13.50,1987
+B055,The Color Purple,Alice Walker,12.25,1982
+B056,The Road,Cormac McCarthy,13.99,2006
+B057,No Country for Old Men,Cormac McCarthy,14.50,2005
+B058,Blood Meridian,Cormac McCarthy,15.25,1985
+B059,The Great Expectations,Charles Dickens,10.99,1861
+B060,A Tale of Two Cities,Charles Dickens,11.75,1859
+B061,David Copperfield,Charles Dickens,12.50,1850
+B062,Oliver Twist,Charles Dickens,9.99,1838
+B063,The Adventures of Tom Sawyer,Mark Twain,10.25,1876
+B064,The Prince,Niccolò Machiavelli,8.50,1532
+B065,The Republic,Plato,9.75,380
+B066,Meditations,Marcus Aurelius,7.99,180
+B067,The Art of War,Sun Tzu,8.25,500
+B068,The Communist Manifesto,Karl Marx,6.99,1848
+B069,The Wealth of Nations,Adam Smith,15.50,1776
+B070,The Origin of Species,Charles Darwin,14.25,1859
+B071,A Brief History of Time,Stephen Hawking,16.99,1988
+B072,Sapiens: A Brief History of Humankind,Yuval Noah Harari,18.75,2011
+B073,Thinking Fast and Slow,Daniel Kahneman,17.50,2011
+B074,The Selfish Gene,Richard Dawkins,14.99,1976
+B075,The Power of Habit,Charles Duhigg,15.25,2012
+B076,Freakonomics,Steven D. Levitt,13.99,2005
+B077,The Tipping Point,Malcolm Gladwell,14.50,2000
+B078,Outliers,Malcolm Gladwell,15.75,2008
+B079,Blink,Malcolm Gladwell,14.25,2005
+B080,The Immortal Life of Henrietta Lacks,Rebecca Skloot,16.50,2010
+B081,The Structure of Scientific Revolutions,Thomas S. Kuhn,17.99,1962
+B082,Guns Germs and Steel,Jared Diamond,18.25,1997
+B083,Silent Spring,Rachel Carson,13.75,1962
+B084,The Double Helix,James D. Watson,12.99,1968
+B085,A Short History of Nearly Everything,Bill Bryson,16.75,2003
+B086,Cosmos,Carl Sagan,15.50,1980
+B087,The Elegant Universe,Brian Greene,17.25,1999
+B088,The God Delusion,Richard Dawkins,16.99,2006
+B089,A People's History of the United States,James D. Watson,19.50,1980
+B090,The Diary of a Young Girl,Anne Frank,9.99,1947
+B091,Night,Elie Wiesel,10.50,1956
+B092,Man's Search for Meaning,Viktor E. Frankl,11.75,1946
+B093,The Autobiography of Malcolm X,Malcolm X,14.99,1965
+B094,I Know Why the Caged Bird Sings,Maya Angelou,12.50,1969
+B095,Long Walk to Freedom,Nelson Mandela,18.99,1994
+B096,In Cold Blood,Truman Capote,13.75,1966
+B097,The Right Stuff,Tom Wolfe,15.25,1979
+B098,Into the Wild,Jon Krakauer,14.50,1996
+B099,Unbroken,Laura Hillenbrand,16.75,2010
+B100,The Glass Castle,Jeannette Walls,13.99,2005
