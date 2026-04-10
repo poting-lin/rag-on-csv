@@ -59,7 +59,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from csv_qa.question_answerer import CSVQuestionAnswerer
 
 try:
-    qa = CSVQuestionAnswerer(model_name="{model}", debug_mode={debug})
+    qa = CSVQuestionAnswerer(model_name="{model}")
     csv_file = "{csv_file}"
     query = "{escaped_query}"
     result = qa.answer_question(query, csv_file)

@@ -10,8 +10,7 @@ def context_memory_qa():
     """Create a CSV Question Answerer with context memory enabled for testing."""
     return CSVQuestionAnswerer(
         model_name="llama3.2:1b",
-        debug_mode=True,
-        enable_context_memory=True
+        enable_context_memory=True,
     )
 
 

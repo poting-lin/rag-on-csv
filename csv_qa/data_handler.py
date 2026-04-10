@@ -1,176 +1,155 @@
 """
-CSV Data Handler module
+CSV Data Handler module.
 """
+import logging
+
 import pandas as pd
-import traceback
+
+from .exceptions import DataLoadError
+
+logger = logging.getLogger(__name__)
 
 
 class CSVDataHandler:
-    """
-    Handles loading and processing CSV data
-    """
+    """Handles loading and processing CSV data."""
 
-    def __init__(self, debug_mode=False):
-        """Initialize the CSV data handler"""
-        self.csv_dataframe = None
-        self.csv_columns = []
-        self.debug_mode = debug_mode
-        self.current_csv_path = None
-        self._cache_clear_callbacks = []
+    def __init__(self) -> None:
+        """Initialize the CSV data handler."""
+        self.csv_dataframe: pd.DataFrame | None = None
+        self.csv_columns: list[str] = []
+        self.current_csv_path: str | None = None
+        self._cache_clear_callbacks: list = []
 
-    def add_cache_clear_callback(self, callback):
-        """
-        Add a callback function to be called when cache should be cleared
-
-        Args:
-            callback: Function to call when cache needs to be cleared
-        """
+    def add_cache_clear_callback(self, callback) -> None:
+        """Add a callback function to be called when cache should be cleared."""
         self._cache_clear_callbacks.append(callback)
 
-    def _trigger_cache_clear(self):
-        """
-        Trigger all registered cache clear callbacks
-        """
+    def _trigger_cache_clear(self) -> None:
+        """Trigger all registered cache clear callbacks."""
         for callback in self._cache_clear_callbacks:
             try:
                 callback()
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error in cache clear callback: {e}")
+                logger.warning("Error in cache clear callback: %s", e)
 
-    def load_csv(self, csv_path: str):
-        """Load CSV file and store dataframe and columns"""
+    def load_csv(self, csv_path: str) -> pd.DataFrame:
+        """Load CSV file and store dataframe and columns.
+
+        Raises:
+            DataLoadError: If the CSV file cannot be loaded.
+        """
         try:
-            # Check if we're loading a different CSV file
             if self.current_csv_path and self.current_csv_path != csv_path:
-                if self.debug_mode:
-                    print(
-                        f"Loading new CSV file: {csv_path} (previous: {self.current_csv_path})")
-                # Clear caches when loading a different CSV
+                logger.info(
+                    "Loading new CSV file: %s (previous: %s)",
+                    csv_path,
+                    self.current_csv_path,
+                )
                 self._trigger_cache_clear()
-            elif not self.current_csv_path:
-                if self.debug_mode:
-                    print(f"Loading CSV file for the first time: {csv_path}")
+            else:
+                logger.info("Loading CSV file: %s", csv_path)
 
             self.csv_dataframe = pd.read_csv(csv_path)
             self.csv_columns = list(self.csv_dataframe.columns)
             self.current_csv_path = csv_path
 
-            if self.debug_mode:
-                print(f"Loaded CSV with columns: {self.csv_columns}")
+            logger.debug("Loaded CSV with columns: %s", self.csv_columns)
 
             return self.csv_dataframe
         except Exception as e:
-            print(f"Error loading CSV: {e}")
-            traceback.print_exc()
-            raise
+            raise DataLoadError(detail=str(e), path=csv_path) from e
 
-    def get_columns(self):
-        """Get the CSV column names"""
+    def get_columns(self) -> list[str]:
+        """Get the CSV column names."""
         return self.csv_columns
 
-    def get_dataframe(self):
-        """Get the CSV dataframe"""
+    def get_dataframe(self) -> pd.DataFrame | None:
+        """Get the CSV dataframe."""
         return self.csv_dataframe
 
-    def is_loaded(self):
-        """Check if CSV data is loaded"""
+    def is_loaded(self) -> bool:
+        """Check if CSV data is loaded."""
         return self.csv_dataframe is not None
 
-    def create_chunks(self):
-        """Create descriptive text chunks for each row in the CSV"""
+    def create_chunks(self) -> list[str]:
+        """Create descriptive text chunks for each row in the CSV."""
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
         chunks = []
         for idx, row in self.csv_dataframe.iterrows():
-            # Create a descriptive text for each row including all columns
             chunk_parts = []
             for col in self.csv_columns:
                 chunk_parts.append(f"{col}: {row[col]}")
 
-            # Join all column descriptions with pipe separator
             chunk = f"Row {idx}: " + " | ".join(chunk_parts)
             chunks.append(chunk)
 
         return chunks
 
-    def find_rows_by_value(self, column, value, exact_match=False):
-        """Find rows where the specified column matches the value
+    def find_rows_by_value(self, column: str, value, exact_match: bool = False) -> pd.DataFrame:
+        """Find rows where the specified column matches the value.
 
         Args:
-            column: Column name to search in
-            value: Value to search for
-            exact_match: If True, only return exact matches; if False, also include contains matches
+            column: Column name to search in.
+            value: Value to search for.
+            exact_match: If True, only return exact matches.
 
         Returns:
-            DataFrame of matching rows
+            DataFrame of matching rows.
         """
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
-        matches = None
-
-        # Case-insensitive search if the value is a string
         if isinstance(value, str):
-            # Try exact match first
-            exact_matches = self.csv_dataframe[self.csv_dataframe[column].astype(
-                str).str.lower() == value.lower()]
+            exact_matches = self.csv_dataframe[
+                self.csv_dataframe[column].astype(str).str.lower() == value.lower()
+            ]
 
-            # If exact match found or only exact matches requested, return those
             if not exact_matches.empty or exact_match:
                 return exact_matches
 
-            # Otherwise try contains match
-            contains_matches = self.csv_dataframe[self.csv_dataframe[column].astype(
-                str).str.lower().str.contains(value.lower())]
+            contains_matches = self.csv_dataframe[
+                self.csv_dataframe[column].astype(str).str.lower().str.contains(value.lower())
+            ]
             return contains_matches
-        else:
-            # For non-string values, only do exact matching
-            matches = self.csv_dataframe[self.csv_dataframe[column] == value]
 
-        return matches
+        return self.csv_dataframe[self.csv_dataframe[column] == value]
 
-    def filter_by_comparison(self, column, operator, value):
-        """Filter the dataframe based on a numerical comparison
+    def filter_by_comparison(self, column: str, operator: str, value: float) -> pd.DataFrame:
+        """Filter the dataframe based on a numerical comparison.
 
         Args:
-            column: Column name to filter on
-            operator: Comparison operator ('>', '<', or '=')
-            value: Numerical value to compare against
+            column: Column name to filter on.
+            operator: Comparison operator ('>', '<', or '=').
+            value: Numerical value to compare against.
 
         Returns:
-            DataFrame of matching rows
+            DataFrame of matching rows.
         """
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
-        # Convert column to numeric if possible
         try:
-            # Try to convert the column to numeric values
             numeric_column = pd.to_numeric(self.csv_dataframe[column])
 
-            # Apply the comparison operator
-            if operator == '>':
-                matches = self.csv_dataframe[numeric_column > value]
-            elif operator == '<':
-                matches = self.csv_dataframe[numeric_column < value]
-            else:  # operator == '='
-                matches = self.csv_dataframe[numeric_column == value]
-
-            return matches
+            if operator == ">":
+                return self.csv_dataframe[numeric_column > value]
+            elif operator == "<":
+                return self.csv_dataframe[numeric_column < value]
+            else:
+                return self.csv_dataframe[numeric_column == value]
         except (ValueError, TypeError):
-            # If column can't be converted to numeric, return empty DataFrame
             return pd.DataFrame()
 
     def execute_query_plan(self, query_plan: dict) -> tuple[pd.DataFrame, str]:
-        """Execute a query plan generated by the LLM
+        """Execute a query plan generated by the LLM.
 
         Args:
-            query_plan: Dictionary with query plan details
+            query_plan: Dictionary with query plan details.
 
         Returns:
-            tuple: (DataFrame of results, description of operation)
+            Tuple of (DataFrame of results, description of operation).
         """
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
@@ -178,176 +157,148 @@ class CSVDataHandler:
         if not query_plan or not isinstance(query_plan, dict):
             return pd.DataFrame(), "Invalid query plan"
 
-        operation = query_plan.get('operation', '').lower()
-        columns = query_plan.get('columns', [])
-        filters = query_plan.get('filters', [])
-        groupby = query_plan.get('groupby', [])
-        sort = query_plan.get('sort', {})
-        limit = query_plan.get('limit', None)
-        description = query_plan.get('description', 'Query results')
+        operation = query_plan.get("operation", "").lower()
+        columns = query_plan.get("columns", [])
+        filters = query_plan.get("filters", [])
+        groupby = query_plan.get("groupby", [])
+        sort = query_plan.get("sort", {})
+        limit = query_plan.get("limit", None)
+        description = query_plan.get("description", "Query results")
 
-        # Start with the full dataframe
         result_df = self.csv_dataframe.copy()
 
-        # Apply filters if any
-        if filters:
-            if isinstance(filters, list):
-                for filter_cond in filters:
-                    if isinstance(filter_cond, dict):
-                        col = filter_cond.get('column')
-                        op = filter_cond.get('operator')
-                        val = filter_cond.get('value')
+        # Apply filters
+        if filters and isinstance(filters, list):
+            for filter_cond in filters:
+                if not isinstance(filter_cond, dict):
+                    continue
 
-                        if col and op and val is not None:
-                            try:
-                                # Convert column to numeric if possible for numerical comparisons
-                                if op in ['>', '<', '>=', '<=', '=', '=='] and isinstance(val, (int, float)):
-                                    try:
-                                        numeric_col = pd.to_numeric(
-                                            result_df[col])
-                                        if op == '>':
-                                            result_df = result_df[numeric_col > val]
-                                        elif op == '<':
-                                            result_df = result_df[numeric_col < val]
-                                        elif op == '>=':
-                                            result_df = result_df[numeric_col >= val]
-                                        elif op == '<=':
-                                            result_df = result_df[numeric_col <= val]
-                                        elif op in ['=', '==']:
-                                            result_df = result_df[numeric_col == val]
-                                    except (ValueError, TypeError):
-                                        # If conversion fails, use string comparison
-                                        if op in ['=', '==']:
-                                            result_df = result_df[result_df[col].astype(
-                                                str).str.lower() == str(val).lower()]
-                                        elif op == 'contains':
-                                            result_df = result_df[result_df[col].astype(
-                                                str).str.lower().str.contains(str(val).lower())]
-                                else:
-                                    # String operations
-                                    if op in ['=', '==']:
-                                        result_df = result_df[result_df[col].astype(
-                                            str).str.lower() == str(val).lower()]
-                                    elif op == 'contains':
-                                        result_df = result_df[result_df[col].astype(
-                                            str).str.lower().str.contains(str(val).lower())]
-                            except Exception as e:
-                                print(
-                                    f"Error applying filter {filter_cond}: {e}")
+                col = filter_cond.get("column")
+                op = filter_cond.get("operator")
+                val = filter_cond.get("value")
 
-        # Handle different operations
-        if operation == 'list':
-            # List just returns the filtered data, optionally with specific columns
-            # For 'where' queries, we want to return all columns of the filtered rows
-            # Only filter columns if explicitly specified and non-empty
+                if not (col and op and val is not None):
+                    continue
+
+                try:
+                    if op in [">", "<", ">=", "<=", "=", "=="] and isinstance(val, (int, float)):
+                        try:
+                            numeric_col = pd.to_numeric(result_df[col])
+                            if op == ">":
+                                result_df = result_df[numeric_col > val]
+                            elif op == "<":
+                                result_df = result_df[numeric_col < val]
+                            elif op == ">=":
+                                result_df = result_df[numeric_col >= val]
+                            elif op == "<=":
+                                result_df = result_df[numeric_col <= val]
+                            elif op in ["=", "=="]:
+                                result_df = result_df[numeric_col == val]
+                        except (ValueError, TypeError):
+                            if op in ["=", "=="]:
+                                result_df = result_df[
+                                    result_df[col].astype(str).str.lower() == str(val).lower()
+                                ]
+                            elif op == "contains":
+                                result_df = result_df[
+                                    result_df[col].astype(str).str.lower().str.contains(str(val).lower())
+                                ]
+                    else:
+                        if op in ["=", "=="]:
+                            result_df = result_df[
+                                result_df[col].astype(str).str.lower() == str(val).lower()
+                            ]
+                        elif op == "contains":
+                            result_df = result_df[
+                                result_df[col].astype(str).str.lower().str.contains(str(val).lower())
+                            ]
+                except Exception as e:
+                    logger.warning("Error applying filter %s: %s", filter_cond, e)
+
+        # Handle operations
+        if operation == "list":
             if columns and len(columns) > 0:
                 try:
                     result_df = result_df[columns]
                 except KeyError:
-                    # If some columns don't exist, just use what we have
-                    valid_cols = [
-                        col for col in columns if col in result_df.columns]
+                    valid_cols = [col for col in columns if col in result_df.columns]
                     if valid_cols:
                         result_df = result_df[valid_cols]
 
-        elif operation == 'count':
-            # Count the number of rows, possibly grouped
+        elif operation == "count":
             if groupby:
                 try:
-                    result_df = result_df.groupby(
-                        groupby).size().reset_index(name='Count')
+                    result_df = result_df.groupby(groupby).size().reset_index(name="Count")
                 except KeyError:
-                    # If groupby columns don't exist, just count all rows
                     count = len(result_df)
-                    result_df = pd.DataFrame({'Count': [count]})
+                    result_df = pd.DataFrame({"Count": [count]})
             else:
                 count = len(result_df)
-                result_df = pd.DataFrame({'Count': [count]})
+                result_df = pd.DataFrame({"Count": [count]})
 
-        elif operation == 'aggregate':
-            # Perform aggregation operations
+        elif operation == "aggregate":
             if groupby and columns:
                 try:
                     agg_dict = {}
                     for col in columns:
                         if isinstance(col, dict):
-                            agg_col = col.get('column')
-                            agg_op = col.get('operation', 'mean')
+                            agg_col = col.get("column")
+                            agg_op = col.get("operation", "mean")
                             if agg_col:
                                 agg_dict[agg_col] = agg_op
                         else:
-                            agg_dict[col] = 'mean'  # Default to mean
+                            agg_dict[col] = "mean"
 
                     if agg_dict:
-                        result_df = result_df.groupby(
-                            groupby).agg(agg_dict).reset_index()
+                        result_df = result_df.groupby(groupby).agg(agg_dict).reset_index()
                 except Exception as e:
-                    print(f"Error in aggregation: {e}")
+                    logger.warning("Error in aggregation: %s", e)
 
-        elif operation == 'summarize':
-            # Provide summary statistics for columns
+        elif operation == "summarize":
             if columns:
                 try:
-                    valid_cols = [
-                        col for col in columns if col in result_df.columns]
+                    valid_cols = [col for col in columns if col in result_df.columns]
                     if valid_cols:
-                        result_df = result_df[valid_cols].describe(
-                        ).reset_index()
+                        result_df = result_df[valid_cols].describe().reset_index()
                 except Exception as e:
-                    print(f"Error in summarize: {e}")
+                    logger.warning("Error in summarize: %s", e)
 
-        # Apply sorting if specified
+        # Apply sorting
         if sort:
             try:
-                sort_col = sort.get('column')
-                sort_order = sort.get('order', 'asc')
+                sort_col = sort.get("column")
+                sort_order = sort.get("order", "asc")
                 if sort_col and sort_col in result_df.columns:
-                    ascending = sort_order.lower() != 'desc'
-                    result_df = result_df.sort_values(
-                        by=sort_col, ascending=ascending)
+                    ascending = sort_order.lower() != "desc"
+                    result_df = result_df.sort_values(by=sort_col, ascending=ascending)
             except Exception as e:
-                print(f"Error in sorting: {e}")
+                logger.warning("Error in sorting: %s", e)
 
-        # Apply limit if specified
+        # Apply limit
         if limit and isinstance(limit, int) and limit > 0:
             result_df = result_df.head(limit)
 
         return result_df, description
 
-    def get_sample_data(self, num_rows=5):
-        """Get sample data from the CSV for LLM context
-
-        Args:
-            num_rows: Number of rows to include in the sample
-
-        Returns:
-            str: Formatted sample data
-        """
+    def get_sample_data(self, num_rows: int = 5) -> str:
+        """Get sample data from the CSV for LLM context."""
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
         sample = self.csv_dataframe.head(num_rows)
         return sample.to_string(index=False)
 
-    def search_value_in_all_columns(self, value, logical_or=False, previous_matches=None):
-        """Search for a value across all columns
-
-        Args:
-            value: Value to search for across all columns
-            logical_or: If True, combine results with previous_matches using OR logic
-            previous_matches: Optional DataFrame of previous matches to combine with
-
-        Returns:
-            DataFrame of matching rows
-        """
+    def search_value_in_all_columns(
+        self, value, logical_or: bool = False, previous_matches: pd.DataFrame | None = None
+    ) -> pd.DataFrame:
+        """Search for a value across all columns."""
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
         value_str = str(value).lower()
         matches = []
-        matched_indices = set()
+        matched_indices: set = set()
 
-        # If we have previous matches and using OR logic, initialize with those indices
         if logical_or and previous_matches is not None and not previous_matches.empty:
             for idx in previous_matches.index:
                 matched_indices.add(idx)
@@ -355,128 +306,96 @@ class CSVDataHandler:
 
         for col in self.csv_columns:
             try:
-                # Try exact matches first
-                exact_matches = self.csv_dataframe[self.csv_dataframe[col].astype(
-                    str).str.lower() == value_str]
+                exact_matches = self.csv_dataframe[
+                    self.csv_dataframe[col].astype(str).str.lower() == value_str
+                ]
                 if not exact_matches.empty:
                     for idx, row in exact_matches.iterrows():
                         if idx not in matched_indices:
                             matches.append(row)
                             matched_indices.add(idx)
 
-                # Then try substring matches
-                contains_matches = self.csv_dataframe[self.csv_dataframe[col].astype(
-                    str).str.lower().str.contains(value_str)]
+                contains_matches = self.csv_dataframe[
+                    self.csv_dataframe[col].astype(str).str.lower().str.contains(value_str)
+                ]
                 if not contains_matches.empty:
                     for idx, row in contains_matches.iterrows():
                         if idx not in matched_indices:
                             matches.append(row)
                             matched_indices.add(idx)
             except Exception as e:
-                # Skip columns that can't be converted to string or have other issues
-                if self.debug_mode:
-                    print(f"Error searching in column {col}: {e}")
+                logger.debug("Error searching in column %s: %s", col, e)
                 continue
 
         return pd.DataFrame(matches) if matches else pd.DataFrame()
 
-    def search_multiple_values(self, values, logical_operator="or"):
-        """Search for multiple values across all columns with logical operators
-
-        Args:
-            values: List of values to search for
-            logical_operator: 'or' or 'and' to combine results
-
-        Returns:
-            DataFrame of matching rows
-        """
+    def search_multiple_values(self, values: list, logical_operator: str = "or") -> pd.DataFrame:
+        """Search for multiple values across all columns with logical operators."""
         if not values:
             return pd.DataFrame()
 
-        # Start with the first value
         result_df = self.search_value_in_all_columns(values[0])
 
-        # Process remaining values with the specified logical operator
         for value in values[1:]:
             if logical_operator.lower() == "or":
-                # OR: Add new matches to existing results
                 new_matches = self.search_value_in_all_columns(
-                    value, logical_or=True, previous_matches=result_df)
+                    value, logical_or=True, previous_matches=result_df
+                )
                 result_df = new_matches
             elif logical_operator.lower() == "and":
-                # AND: Only keep rows that match both conditions
                 new_matches = self.search_value_in_all_columns(value)
                 if not new_matches.empty and not result_df.empty:
-                    # Keep only rows that exist in both DataFrames
-                    result_df = result_df[result_df.index.isin(
-                        new_matches.index)]
+                    result_df = result_df[result_df.index.isin(new_matches.index)]
                 else:
-                    # If either is empty, result is empty (AND logic)
                     result_df = pd.DataFrame()
 
         return result_df
 
-    def analyze_data(self, filter_column=None, filter_value=None, target_columns=None):
-        """Perform statistical analysis on the data
-
-        Args:
-            filter_column: Optional column to filter on
-            filter_value: Optional value to filter by
-            target_columns: Optional list of columns to analyze (defaults to all numeric columns)
-
-        Returns:
-            dict: Analysis results with statistics and outliers
-        """
+    def analyze_data(
+        self,
+        filter_column: str | None = None,
+        filter_value=None,
+        target_columns: list[str] | None = None,
+    ) -> dict:
+        """Perform statistical analysis on the data."""
         if self.csv_dataframe is None:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
-        # Start with the full dataframe
         df = self.csv_dataframe
 
-        # Apply filter if specified
         if filter_column and filter_value:
             try:
                 if isinstance(filter_value, str):
-                    df = df[df[filter_column].astype(
-                        str).str.lower() == filter_value.lower()]
+                    df = df[df[filter_column].astype(str).str.lower() == filter_value.lower()]
                 else:
                     df = df[df[filter_column] == filter_value]
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error filtering data: {e}")
-                # Continue with unfiltered data
+                logger.warning("Error filtering data: %s", e)
 
-        # If no records after filtering
         if df.empty:
             return {"error": "No data matching the filter criteria"}
 
-        # Identify numeric columns if not specified
         if not target_columns:
-            target_columns = df.select_dtypes(
-                include=['number']).columns.tolist()
+            target_columns = df.select_dtypes(include=["number"]).columns.tolist()
         else:
-            # Filter to only include columns that exist and are numeric
             target_columns = [
-                col for col in target_columns
+                col
+                for col in target_columns
                 if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
             ]
 
         if not target_columns:
             return {"error": "No numeric columns found for analysis"}
 
-        # Initialize results dictionary
-        results = {
+        results: dict = {
             "record_count": len(df),
             "columns": {},
             "categorical_counts": {},
-            "outliers": {}
+            "outliers": {},
         }
 
-        # Get categorical columns (non-numeric) for distribution analysis
-        categorical_columns = [
-            col for col in df.columns if col not in target_columns]
+        categorical_columns = [col for col in df.columns if col not in target_columns]
 
-        # Analyze each numeric column
         for col in target_columns:
             try:
                 col_stats = {
@@ -484,37 +403,31 @@ class CSVDataHandler:
                     "max": float(df[col].max()),
                     "mean": float(df[col].mean()),
                     "median": float(df[col].median()),
-                    "std": float(df[col].std())
+                    "std": float(df[col].std()),
                 }
 
-                # Identify outliers (values more than 2 standard deviations from mean)
                 mean = col_stats["mean"]
                 std = col_stats["std"]
-                outliers = df[(df[col] < mean - 2*std) |
-                              (df[col] > mean + 2*std)]
+                outliers = df[(df[col] < mean - 2 * std) | (df[col] > mean + 2 * std)]
 
                 if not outliers.empty:
                     results["outliers"][col] = {
                         "count": len(outliers),
                         "values": outliers[col].tolist(),
-                        # Limit to 5 outlier records
-                        "records": outliers.to_dict(orient="records")[:5]
+                        "records": outliers.to_dict(orient="records")[:5],
                     }
 
                 results["columns"][col] = col_stats
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error analyzing column {col}: {e}")
+                logger.debug("Error analyzing column %s: %s", col, e)
                 continue
 
-        # Get distribution of categorical columns
-        for col in categorical_columns[:5]:  # Limit to 5 categorical columns
+        for col in categorical_columns[:5]:
             try:
-                value_counts = df[col].value_counts().head(10)  # Top 10 values
+                value_counts = df[col].value_counts().head(10)
                 results["categorical_counts"][col] = value_counts.to_dict()
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error analyzing categorical column {col}: {e}")
+                logger.debug("Error analyzing categorical column %s: %s", col, e)
                 continue
 
         return results

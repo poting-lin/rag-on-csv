@@ -105,9 +105,9 @@ class TestRunner:
             from csv_qa.enhanced_vector_search import CSVAwareVectorSearch
 
             # Test basic instantiation
-            router = QuestionRouter(debug_mode=False)
-            structured_engine = StructuredQueryEngine(debug_mode=False)
-            enhanced_search = CSVAwareVectorSearch(debug_mode=False)
+            router = QuestionRouter()
+            structured_engine = StructuredQueryEngine()
+            enhanced_search = CSVAwareVectorSearch()
 
             # Test that they have expected methods
             assert hasattr(router, 'route_question')
@@ -125,9 +125,7 @@ class TestRunner:
             # Test initialization with enhanced engines
             qa = CSVQuestionAnswerer(
                 model_name="llama3.2:1b",
-                debug_mode=False,
                 enable_context_memory=True,
-                use_enhanced_engines=True
             )
 
             # Test that enhanced engines are available

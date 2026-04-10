@@ -18,8 +18,7 @@ def demo_context_memory():
     # Initialize with context memory enabled
     qa = CSVQuestionAnswerer(
         model_name="llama3.2:1b",
-        debug_mode=True,  # Enable to see context detection
-        enable_context_memory=True
+        enable_context_memory=True,
     )
 
     # Load sample data
@@ -77,7 +76,7 @@ def demo_context_features():
     print("🔧 Context Memory Features Demo")
     print("=" * 50)
 
-    qa = CSVQuestionAnswerer(enable_context_memory=True, debug_mode=True)
+    qa = CSVQuestionAnswerer(enable_context_memory=True)
     qa.load_csv("sample_data/lab_data.csv")
 
     # Feature 1: Pronoun Resolution
@@ -122,7 +121,7 @@ def interactive_demo():
     print("• Type 'quit' to exit")
     print("=" * 50)
 
-    qa = CSVQuestionAnswerer(enable_context_memory=True, debug_mode=False)
+    qa = CSVQuestionAnswerer(enable_context_memory=True)
     qa.load_csv("sample_data/lab_data.csv")
 
     while True:

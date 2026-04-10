@@ -1,50 +1,40 @@
 """
-Question Router module - intelligently routes questions to appropriate engines
+Question Router module - intelligently routes questions to appropriate engines.
 """
+import logging
 import re
-from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 class QuestionRouter:
-    """Routes questions to the most appropriate processing engine"""
+    """Routes questions to the most appropriate processing engine."""
 
-    def __init__(self, debug_mode=False):
-        self.debug_mode = debug_mode
-
-    def route_question(self, question: str, csv_columns: List[str]) -> str:
-        """
-        Route questions to the most appropriate engine
+    def route_question(self, question: str, csv_columns: list[str]) -> str:
+        """Route questions to the most appropriate engine.
 
         Args:
-            question: The user's question
-            csv_columns: List of available CSV columns
+            question: The user's question.
+            csv_columns: List of available CSV columns.
 
         Returns:
-            str: Engine type ('structured', 'semantic', or 'hybrid')
+            Engine type ('structured', 'semantic', or 'hybrid').
         """
-        if self.debug_mode:
-            print(f"Routing question: {question}")
+        logger.debug("Routing question: %s", question)
 
-        # Route to structured engine for precise queries
         if self._is_structured_query(question, csv_columns):
-            if self.debug_mode:
-                print("Routed to: structured engine")
-            return 'structured'
+            logger.debug("Routed to: structured engine")
+            return "structured"
 
-        # Route to semantic engine for exploratory questions
-        elif self._is_semantic_query(question):
-            if self.debug_mode:
-                print("Routed to: semantic engine")
-            return 'semantic'
+        if self._is_semantic_query(question):
+            logger.debug("Routed to: semantic engine")
+            return "semantic"
 
-        # Use hybrid for complex queries
-        else:
-            if self.debug_mode:
-                print("Routed to: hybrid engine")
-            return 'hybrid'
+        logger.debug("Routed to: hybrid engine")
+        return "hybrid"
 
-    def _is_structured_query(self, question: str, columns: List[str]) -> bool:
-        """Check if question can be answered with direct DataFrame operations"""
+    def _is_structured_query(self, question: str, columns: list[str]) -> bool:
+        """Check if question can be answered with direct DataFrame operations."""
         question_lower = question.lower()
 
         # Patterns that indicate structured queries
@@ -74,8 +64,7 @@ class QuestionRouter:
         # Check pattern matches
         for pattern in structured_patterns:
             if re.search(pattern, question_lower):
-                if self.debug_mode:
-                    print(f"Matched structured pattern: {pattern}")
+                logger.debug("Matched structured pattern: %s", pattern)
                 return True
 
         # Check if question mentions specific columns and has simple structure
@@ -88,22 +77,19 @@ class QuestionRouter:
                 'max', 'min', 'average', 'count', 'sum', 'total'
             ]
             if any(indicator in question_lower for indicator in simple_indicators):
-                if self.debug_mode:
-                    print(
-                        f"Mentioned columns: {mentioned_columns} with simple indicators")
+                logger.debug("Mentioned columns: %s with simple indicators", mentioned_columns)
                 return True
 
         # Check for direct value lookups
         if any(word in question_lower for word in ['where', 'equals', 'is', '=']):
             if mentioned_columns:
-                if self.debug_mode:
-                    print("Direct value lookup detected")
+                logger.debug("Direct value lookup detected")
                 return True
 
         return False
 
     def _is_semantic_query(self, question: str) -> bool:
-        """Check if question needs semantic understanding"""
+        """Check if question needs semantic understanding."""
         question_lower = question.lower()
 
         semantic_indicators = [
@@ -129,15 +115,13 @@ class QuestionRouter:
             indicator in question_lower for indicator in semantic_indicators)
 
         if has_semantic_indicators:
-            if self.debug_mode:
-                matching_indicators = [
-                    ind for ind in semantic_indicators if ind in question_lower]
-                print(f"Semantic indicators found: {matching_indicators}")
+            matching_indicators = [ind for ind in semantic_indicators if ind in question_lower]
+            logger.debug("Semantic indicators found: %s", matching_indicators)
 
         return has_semantic_indicators
 
     def get_query_complexity(self, question: str) -> str:
-        """Determine the complexity level of the query"""
+        """Determine the complexity level of the query."""
         question_lower = question.lower()
 
         # Simple queries - single operation
@@ -154,8 +138,8 @@ class QuestionRouter:
 
         return 'medium'  # Default
 
-    def extract_query_intent(self, question: str, columns: List[str]) -> Dict:
-        """Extract the intent and components from the question"""
+    def extract_query_intent(self, question: str, columns: list[str]) -> dict:
+        """Extract the intent and components from the question."""
         question_lower = question.lower()
 
         intent = {
@@ -199,7 +183,6 @@ class QuestionRouter:
                 'column': agg_match.group(2)
             })
 
-        if self.debug_mode:
-            print(f"Extracted intent: {intent}")
+        logger.debug("Extracted intent: %s", intent)
 
         return intent
