@@ -1,6 +1,7 @@
 """
 Context Memory module for maintaining conversation history and context awareness.
 """
+
 import json
 import logging
 import re
@@ -65,10 +66,17 @@ class ConversationContext:
         self.vectorizer = None
         self.question_vectors = None
 
-    def add_turn(self, question: str, answer: str, question_type: str = "unknown",
-                 entities_mentioned: list[str] | None = None, result_count: int = 0,
-                 confidence_score: float = 1.0, metadata: dict[str, Any] | None = None,
-                 result_data: dict[str, Any] | None = None):
+    def add_turn(
+        self,
+        question: str,
+        answer: str,
+        question_type: str = "unknown",
+        entities_mentioned: list[str] | None = None,
+        result_count: int = 0,
+        confidence_score: float = 1.0,
+        metadata: dict[str, Any] | None = None,
+        result_data: dict[str, Any] | None = None,
+    ):
         """Add a new conversation turn"""
 
         if entities_mentioned is None:
@@ -85,15 +93,14 @@ class ConversationContext:
             result_count=result_count,
             confidence_score=confidence_score,
             metadata=metadata,
-            result_data=result_data
+            result_data=result_data,
         )
 
         self.conversation_history.append(turn)
 
         # Update entity mentions
         for entity in entities_mentioned:
-            self.mentioned_entities[entity] = self.mentioned_entities.get(
-                entity, 0) + 1
+            self.mentioned_entities[entity] = self.mentioned_entities.get(entity, 0) + 1
 
         # Update current focus based on the question
         self._update_current_focus(question, entities_mentioned)
@@ -129,17 +136,14 @@ class ConversationContext:
         # 1. Check for explicit references (pronouns, "that", "it", "them", etc.)
         if self._has_context_references(current_question):
             # Include recent turns that might be referenced
-            relevant_turns.extend(
-                self.conversation_history[-2:])  # Last 2 turns
+            relevant_turns.extend(self.conversation_history[-2:])  # Last 2 turns
 
         # 2. Check for semantic similarity with previous questions
-        similar_turns = self._find_similar_questions(
-            current_question, max_context_turns)
+        similar_turns = self._find_similar_questions(current_question, max_context_turns)
         relevant_turns.extend(similar_turns)
 
         # 3. Include turns that mention entities in the current question
-        entity_related_turns = self._find_entity_related_turns(
-            current_question, max_context_turns)
+        entity_related_turns = self._find_entity_related_turns(current_question, max_context_turns)
         relevant_turns.extend(entity_related_turns)
 
         # 4. Include recent turns if focus hasn't changed much
@@ -184,17 +188,14 @@ class ConversationContext:
             else:
                 time_str = f"{time_ago.seconds // 3600} hours ago"
 
-            context_parts.append(
-                f"\n{i}. User asked ({time_str}): {turn.question}")
+            context_parts.append(f"\n{i}. User asked ({time_str}): {turn.question}")
 
             # Include a summary of the answer
-            answer_summary = turn.answer[:200] + \
-                "..." if len(turn.answer) > 200 else turn.answer
+            answer_summary = turn.answer[:200] + "..." if len(turn.answer) > 200 else turn.answer
             context_parts.append(f"   Answer: {answer_summary}")
 
             if turn.result_count > 0:
-                context_parts.append(
-                    f"   (Returned {turn.result_count} records)")
+                context_parts.append(f"   (Returned {turn.result_count} records)")
 
         return "\n".join(context_parts)
 
@@ -217,11 +218,11 @@ class ConversationContext:
         for turn in reversed(self.conversation_history):
             if turn.result_data and turn.result_count > 0:
                 # Check if this turn had filtering that we should preserve
-                if 'filter_applied' in turn.result_data:
+                if "filter_applied" in turn.result_data:
                     logger.debug(
-                    "Found context data filter from previous turn: %s...",
-                    turn.question[:50],
-                )
+                        "Found context data filter from previous turn: %s...",
+                        turn.question[:50],
+                    )
                     return turn.result_data
                 break
 
@@ -238,41 +239,35 @@ class ConversationContext:
             - referenced_turns: List of relevant previous turns
             - suggested_context: Context to include in the query
         """
-        result = {
-            'is_follow_up': False,
-            'reference_type': None,
-            'referenced_turns': [],
-            'suggested_context': ""
-        }
+        result = {"is_follow_up": False, "reference_type": None, "referenced_turns": [], "suggested_context": ""}
 
         if not self.conversation_history:
             return result
 
         # Check for explicit references
         if self._has_context_references(current_question):
-            result['is_follow_up'] = True
-            result['reference_type'] = 'pronoun'
+            result["is_follow_up"] = True
+            result["reference_type"] = "pronoun"
             # Recent context
-            result['referenced_turns'] = self.conversation_history[-2:]
+            result["referenced_turns"] = self.conversation_history[-2:]
 
         # Check for implicit continuation
         elif self._is_continuing_conversation(current_question):
-            result['is_follow_up'] = True
-            result['reference_type'] = 'continuation'
-            result['referenced_turns'] = self.conversation_history[-1:]  # Last turn
+            result["is_follow_up"] = True
+            result["reference_type"] = "continuation"
+            result["referenced_turns"] = self.conversation_history[-1:]  # Last turn
 
         # Check for similar questions (refinement)
         similar_turns = self._find_similar_questions(current_question, 2)
         if similar_turns:
-            result['is_follow_up'] = True
-            if not result['reference_type']:
-                result['reference_type'] = 'refinement'
-            result['referenced_turns'].extend(similar_turns)
+            result["is_follow_up"] = True
+            if not result["reference_type"]:
+                result["reference_type"] = "refinement"
+            result["referenced_turns"].extend(similar_turns)
 
         # Generate context summary
-        if result['referenced_turns']:
-            result['suggested_context'] = self.get_context_summary(
-                result['referenced_turns'])
+        if result["referenced_turns"]:
+            result["suggested_context"] = self.get_context_summary(result["referenced_turns"])
 
         return result
 
@@ -287,12 +282,10 @@ class ConversationContext:
         # Count question types
         type_counts = {}
         for turn in self.conversation_history:
-            type_counts[turn.question_type] = type_counts.get(
-                turn.question_type, 0) + 1
+            type_counts[turn.question_type] = type_counts.get(turn.question_type, 0) + 1
 
         # Most mentioned entities
-        top_entities = sorted(self.mentioned_entities.items(),
-                              key=lambda x: x[1], reverse=True)[:5]
+        top_entities = sorted(self.mentioned_entities.items(), key=lambda x: x[1], reverse=True)[:5]
 
         summary = [
             "Conversation Summary:",
@@ -303,8 +296,7 @@ class ConversationContext:
         ]
 
         if top_entities:
-            summary.append(
-                f"- Most discussed: {', '.join([f'{e}({c})' for e, c in top_entities])}")
+            summary.append(f"- Most discussed: {', '.join([f'{e}({c})' for e, c in top_entities])}")
 
         return "\n".join(summary)
 
@@ -322,27 +314,26 @@ class ConversationContext:
     def save_to_file(self, filepath: str):
         """Save conversation history to a JSON file"""
         data = {
-            'session_start': self.session_start.isoformat(),
-            'current_focus': self.current_focus,
-            'mentioned_entities': self.mentioned_entities,
-            'conversation_history': [turn.to_dict() for turn in self.conversation_history]
+            "session_start": self.session_start.isoformat(),
+            "current_focus": self.current_focus,
+            "mentioned_entities": self.mentioned_entities,
+            "conversation_history": [turn.to_dict() for turn in self.conversation_history],
         }
 
-        with open(filepath, 'w') as f:
+        with open(filepath, "w") as f:
             json.dump(data, f, indent=2)
 
     def load_from_file(self, filepath: str):
         """Load conversation history from a JSON file"""
-        with open(filepath, 'r') as f:
+        with open(filepath, "r") as f:
             data = json.load(f)
 
-        self.session_start = datetime.fromisoformat(data['session_start'])
-        self.current_focus = data.get('current_focus')
-        self.mentioned_entities = data.get('mentioned_entities', {})
+        self.session_start = datetime.fromisoformat(data["session_start"])
+        self.current_focus = data.get("current_focus")
+        self.mentioned_entities = data.get("mentioned_entities", {})
 
         self.conversation_history = [
-            ConversationTurn.from_dict(turn_data)
-            for turn_data in data.get('conversation_history', [])
+            ConversationTurn.from_dict(turn_data) for turn_data in data.get("conversation_history", [])
         ]
 
         self._rebuild_question_vectors()
@@ -352,11 +343,11 @@ class ConversationContext:
     def _has_context_references(self, question: str) -> bool:
         """Check if the question has pronouns or references to previous context"""
         context_patterns = [
-            r'\b(it|they|them|that|those|this|these)\b',
-            r'\b(the same|similar|like that|like those)\b',
-            r'\b(also|too|as well)\b',
-            r'\b(what about|how about)\b',
-            r'\b(and|but|however|instead)\b'
+            r"\b(it|they|them|that|those|this|these)\b",
+            r"\b(the same|similar|like that|like those)\b",
+            r"\b(also|too|as well)\b",
+            r"\b(what about|how about)\b",
+            r"\b(and|but|however|instead)\b",
         ]
 
         question_lower = question.lower()
@@ -383,8 +374,7 @@ class ConversationContext:
             current_vector = self.vectorizer.transform([current_question])
 
             # Calculate similarities
-            similarities = cosine_similarity(
-                current_vector, self.question_vectors)[0]
+            similarities = cosine_similarity(current_vector, self.question_vectors)[0]
 
             # Get top similar questions (excluding perfect matches)
             similar_indices = []
@@ -405,8 +395,7 @@ class ConversationContext:
     def _find_entity_related_turns(self, current_question: str, max_results: int = 3) -> list[ConversationTurn]:
         """Find turns that mention entities from the current question"""
         # Extract potential entities from current question (simple approach)
-        words = re.findall(
-            r'\b[A-Z][a-zA-Z]+\b|\b\w+[_]\w+\b', current_question)
+        words = re.findall(r"\b[A-Z][a-zA-Z]+\b|\b\w+[_]\w+\b", current_question)
 
         related_turns = []
         for turn in self.conversation_history:
@@ -433,17 +422,15 @@ class ConversationContext:
 
         # Entity overlap bonus
         current_words = set(current_question.lower().split())
-        turn_entities = set(entity.lower()
-                            for entity in turn.entities_mentioned)
+        turn_entities = set(entity.lower() for entity in turn.entities_mentioned)
         overlap = len(current_words & turn_entities)
         if turn_entities:
             overlap_ratio = overlap / len(turn_entities)
             score += overlap_ratio * 0.3
 
         # Question type consistency bonus
-        if turn.question_type in ['filter', 'lookup'] and any(
-            word in current_question.lower()
-            for word in ['where', 'show', 'find', 'get', 'list']
+        if turn.question_type in ["filter", "lookup"] and any(
+            word in current_question.lower() for word in ["where", "show", "find", "get", "list"]
         ):
             score += 0.2
 
@@ -453,13 +440,11 @@ class ConversationContext:
         """Update the current conversation focus"""
         if entities_mentioned:
             # Focus on the most important entity
-            self.current_focus = max(
-                entities_mentioned, key=lambda e: self.mentioned_entities.get(e, 0))
+            self.current_focus = max(entities_mentioned, key=lambda e: self.mentioned_entities.get(e, 0))
         elif not self.current_focus:
             # Extract potential focus from question
             words = question.split()
-            capitalized_words = [
-                w for w in words if w[0].isupper() and len(w) > 3]
+            capitalized_words = [w for w in words if w[0].isupper() and len(w) > 3]
             if capitalized_words:
                 self.current_focus = capitalized_words[0]
 
@@ -468,14 +453,11 @@ class ConversationContext:
         cutoff_time = datetime.now() - timedelta(minutes=self.max_age_minutes)
 
         # Remove old turns
-        self.conversation_history = [
-            turn for turn in self.conversation_history
-            if turn.timestamp > cutoff_time
-        ]
+        self.conversation_history = [turn for turn in self.conversation_history if turn.timestamp > cutoff_time]
 
         # Keep only the most recent turns if we exceed the limit
         if len(self.conversation_history) > self.max_turns:
-            self.conversation_history = self.conversation_history[-self.max_turns:]
+            self.conversation_history = self.conversation_history[-self.max_turns :]
 
         # Clean up entity mentions for removed turns
         if len(self.conversation_history) < len(self.mentioned_entities):
@@ -485,8 +467,7 @@ class ConversationContext:
 
             # Remove entities that are no longer mentioned
             self.mentioned_entities = {
-                entity: count for entity, count in self.mentioned_entities.items()
-                if entity in current_entities
+                entity: count for entity, count in self.mentioned_entities.items() if entity in current_entities
             }
 
     def _rebuild_question_vectors(self):
@@ -505,8 +486,7 @@ class ConversationContext:
             return
 
         try:
-            self.vectorizer = TfidfVectorizer(
-                stop_words='english', max_features=1000)
+            self.vectorizer = TfidfVectorizer(stop_words="english", max_features=1000)
             self.question_vectors = self.vectorizer.fit_transform(questions)
         except Exception as e:
             logger.debug("Error building question vectors: %s", e)

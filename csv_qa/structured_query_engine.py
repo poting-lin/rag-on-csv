@@ -1,6 +1,7 @@
 """
 Structured Query Engine - handles direct DataFrame operations for precise queries.
 """
+
 import logging
 import re
 from typing import Optional
@@ -77,9 +78,7 @@ class StructuredQueryEngine:
                 engine="structured",
             )
 
-    def _handle_aggregation_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_aggregation_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle aggregation queries like 'max DecibelsA', 'average Location'."""
         agg_patterns = [
             (r"(?:what is|show|get)\s+(?:the\s+)?(max|maximum)\s+(\w+)", "max"),
@@ -137,9 +136,7 @@ class StructuredQueryEngine:
 
         return QueryResult.fail("NO_MATCH", "No aggregation pattern matched.", engine="structured")
 
-    def _handle_filter_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_filter_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle filtering queries like 'show records where EventType is Festival'."""
         filter_patterns = [
             r"(?:show|list|find|get)\s+records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)",
@@ -184,9 +181,7 @@ class StructuredQueryEngine:
 
         return QueryResult.fail("NO_MATCH", "No filter pattern matched.", engine="structured")
 
-    def _handle_column_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_column_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle column display queries like 'show Location column'."""
         column_patterns = [
             r"(?:show|display|get)\s+(\w+)\s+(?:column|values?)",
@@ -238,9 +233,7 @@ class StructuredQueryEngine:
 
         return QueryResult.fail("NO_MATCH", "No column pattern matched.", engine="structured")
 
-    def _handle_comparison_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_comparison_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle comparison queries like 'DecibelsA above 80'."""
         comparison_patterns = [
             (r"(\w+)\s+(?:above|over|greater\s+than|>|>=)\s+(\d+(?:\.\d+)?)", ">"),
@@ -298,9 +291,7 @@ class StructuredQueryEngine:
 
         return QueryResult.fail("NO_MATCH", "No comparison pattern matched.", engine="structured")
 
-    def _handle_statistics_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_statistics_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle basic statistics queries."""
         if not any(word in question for word in ["statistics", "stats", "describe"]):
             return QueryResult.fail("NO_MATCH", "Not a statistics query.", engine="structured")
@@ -331,9 +322,7 @@ class StructuredQueryEngine:
             metadata={"data": df[numeric_columns].describe()},
         )
 
-    def _handle_count_query(
-        self, question: str, df: pd.DataFrame, columns: list[str]
-    ) -> QueryResult:
+    def _handle_count_query(self, question: str, df: pd.DataFrame, columns: list[str]) -> QueryResult:
         """Handle count queries like 'how many records', 'count records'."""
         count_patterns = [
             r"(?:how many|count)\s+records",

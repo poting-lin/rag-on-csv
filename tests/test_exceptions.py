@@ -1,4 +1,5 @@
 """Unit tests for the custom exception hierarchy and QueryResult dataclass."""
+
 import pytest
 
 from csv_qa.exceptions import (

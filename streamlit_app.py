@@ -51,6 +51,7 @@ def configure_logging(debug_mode: bool = False) -> None:
 
 class OllamaStatus(Enum):
     """Ollama service readiness status."""
+
     OLLAMA_DOWN = "ollama_down"
     MODEL_DOWNLOADING = "model_downloading"
     READY = "ready"
@@ -74,7 +75,6 @@ def check_ollama_ready() -> OllamaStatus:
         return OllamaStatus.MODEL_DOWNLOADING
     except Exception:
         return OllamaStatus.OLLAMA_DOWN
-
 
 
 def get_ollama_models() -> list[str]:
@@ -151,9 +151,7 @@ def initialize_session_state() -> None:
         st.session_state.suggested_questions = []
 
 
-def create_qa_instance(
-    model_name: str, enable_context_memory: bool
-) -> CSVQuestionAnswerer | None:
+def create_qa_instance(model_name: str, enable_context_memory: bool) -> CSVQuestionAnswerer | None:
     """Create and configure QA instance."""
     try:
         return CSVQuestionAnswerer(
@@ -193,11 +191,7 @@ def display_conversation_history() -> None:
     if st.session_state.conversation_history:
         st.subheader("Conversation History")
         for i, (question, answer) in enumerate(st.session_state.conversation_history):
-            question_preview = (
-                f"Q{i + 1}: {question[:50]}..."
-                if len(question) > 50
-                else f"Q{i + 1}: {question}"
-            )
+            question_preview = f"Q{i + 1}: {question[:50]}..." if len(question) > 50 else f"Q{i + 1}: {question}"
             with st.expander(question_preview, expanded=False):
                 st.write("**Question:**", question)
                 st.write("**Answer:**", answer)
@@ -267,7 +261,7 @@ def process_question(
     except CSVQAError as e:
         st.error(f"Error: {e.user_message}")
         return e.user_message, [], False
-    except Exception as e:
+    except Exception:
         logger.error("Unhandled exception processing question", exc_info=True)
         error_msg = "An unexpected error occurred. Enable debug mode for details."
         st.error(error_msg)
@@ -388,9 +382,7 @@ def main() -> None:
                 "Sound Measurements": "sample_data/sound_measurements.csv",
             }
 
-            selected_sample = st.selectbox(
-                "Choose sample dataset", ["None"] + list(sample_options.keys())
-            )
+            selected_sample = st.selectbox("Choose sample dataset", ["None"] + list(sample_options.keys()))
 
             if selected_sample != "None" and os.path.exists(sample_options[selected_sample]):
                 uploaded_file = sample_options[selected_sample]
@@ -406,9 +398,7 @@ def main() -> None:
             or getattr(st.session_state, "current_context", None) != enable_context_memory
         ):
             with st.spinner("Initializing Q&A system..."):
-                st.session_state.qa_instance = create_qa_instance(
-                    model_name, enable_context_memory
-                )
+                st.session_state.qa_instance = create_qa_instance(model_name, enable_context_memory)
                 st.session_state.current_model = model_name
                 st.session_state.current_context = enable_context_memory
 
@@ -418,32 +408,24 @@ def main() -> None:
                     if isinstance(uploaded_file, str):
                         csv_file_path = uploaded_file
                         try:
-                            st.session_state.csv_columns = (
-                                st.session_state.qa_instance.load_csv(csv_file_path)
-                            )
+                            st.session_state.csv_columns = st.session_state.qa_instance.load_csv(csv_file_path)
                             df = pd.read_csv(csv_file_path)
                         except DataLoadError as e:
                             st.error(f"Failed to load CSV: {e.detail}")
                             csv_file_path = None
                             df = None
                     else:
-                        csv_file_path, columns, df = load_csv_file(
-                            uploaded_file, st.session_state.qa_instance
-                        )
+                        csv_file_path, columns, df = load_csv_file(uploaded_file, st.session_state.qa_instance)
                         st.session_state.csv_columns = columns
 
                     if csv_file_path and df is not None:
                         st.session_state.current_csv_file = uploaded_file
                         st.session_state.current_csv_path = csv_file_path
-                        st.success(
-                            f"CSV loaded successfully! Found {len(df)} rows and {len(df.columns)} columns."
-                        )
+                        st.success(f"CSV loaded successfully! Found {len(df)} rows and {len(df.columns)} columns.")
 
                         with st.spinner("Generating suggested questions..."):
-                            suggested_questions = (
-                                st.session_state.qa_instance.generate_suggested_questions(
-                                    csv_file_path
-                                )
+                            suggested_questions = st.session_state.qa_instance.generate_suggested_questions(
+                                csv_file_path
                             )
                             st.session_state.suggested_questions = suggested_questions
 
@@ -473,8 +455,7 @@ def main() -> None:
                             "Type": df.dtypes.astype(str),
                             "Non-Null Count": df.count(),
                             "Sample Values": [
-                                ", ".join(df[col].dropna().astype(str).unique()[:3])
-                                for col in df.columns
+                                ", ".join(df[col].dropna().astype(str).unique()[:3]) for col in df.columns
                             ],
                         }
                     )
@@ -512,9 +493,7 @@ def main() -> None:
             col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
 
             with col_btn1:
-                ask_button = st.button(
-                    "Ask Question", type="primary", disabled=not question.strip()
-                )
+                ask_button = st.button("Ask Question", type="primary", disabled=not question.strip())
 
             with col_btn2:
                 if enable_context_memory:
@@ -577,9 +556,7 @@ def main() -> None:
 
 *Note: Load a CSV file to get specific suggested questions for your data.*
                             """
-                            st.session_state.conversation_history.append(
-                                (question, fallback_answer)
-                            )
+                            st.session_state.conversation_history.append((question, fallback_answer))
                             st.success("**General Help:**")
                             st.write(fallback_answer)
 
@@ -620,9 +597,7 @@ def main() -> None:
                                                 st.session_state.current_csv_path,
                                                 False,
                                             )
-                                            st.session_state.conversation_history.append(
-                                                (suggestion, corrected_answer)
-                                            )
+                                            st.session_state.conversation_history.append((suggestion, corrected_answer))
                                             st.rerun()
                         else:
                             st.success("**Answer:**")

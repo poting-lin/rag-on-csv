@@ -1,6 +1,7 @@
 """
 Hybrid Engine - combines structured queries, semantic search, and LLM analysis.
 """
+
 import logging
 from typing import Any
 
@@ -215,9 +216,7 @@ class HybridCSVEngine:
 
         return min(base_confidence, 1.0)
 
-    def _calculate_semantic_confidence(
-        self, question: str, context: str, response: str
-    ) -> float:
+    def _calculate_semantic_confidence(self, question: str, context: str, response: str) -> float:
         """Calculate confidence score for semantic analysis."""
         base_confidence = 0.7
 

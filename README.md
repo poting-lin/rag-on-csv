@@ -230,6 +230,30 @@ Match 1:
 
 The project includes sample CSV files to test with. The enhanced system automatically adapts to any CSV structure and provides AI-generated suggestions based on your specific data.
 
+## Development
+
+Run lint, format, and tests via Docker (no local Python setup needed):
+
+```bash
+# Lint (auto-fix)
+docker compose run --rm lint
+
+# Format
+docker compose run --rm format
+
+# Test
+docker compose run --rm test
+```
+
+For local development without Docker:
+
+```bash
+poetry install
+poetry run ruff check --fix .
+poetry run ruff format .
+poetry run pytest
+```
+
 ## Troubleshooting
 
 ### Common Issues

@@ -1,6 +1,7 @@
 """
 Fixtures and utilities for Context Memory integration tests.
 """
+
 import pytest
 from csv_qa.question_answerer import CSVQuestionAnswerer
 
@@ -24,22 +25,21 @@ class ContextMemoryTestHelper:
 
         # Check for aggregation type
         aggregation_keywords = {
-            'max': ['max', 'maximum', 'highest', 'largest'],
-            'min': ['min', 'minimum', 'lowest', 'smallest'],
-            'avg': ['avg', 'average', 'mean'],
-            'sum': ['sum', 'total'],
-            'count': ['count', 'number']
+            "max": ["max", "maximum", "highest", "largest"],
+            "min": ["min", "minimum", "lowest", "smallest"],
+            "avg": ["avg", "average", "mean"],
+            "sum": ["sum", "total"],
+            "count": ["count", "number"],
         }
 
-        keywords = aggregation_keywords.get(
-            aggregation_type, [aggregation_type])
-        assert any(keyword in answer_lower for keyword in keywords), \
+        keywords = aggregation_keywords.get(aggregation_type, [aggregation_type])
+        assert any(keyword in answer_lower for keyword in keywords), (
             f"Answer should contain aggregation keyword for '{aggregation_type}'"
+        )
 
         # Check for column name if provided
         if column_name:
-            assert column_name.lower(
-            ) in answer_lower, f"Answer should mention column '{column_name}'"
+            assert column_name.lower() in answer_lower, f"Answer should mention column '{column_name}'"
 
         # Check for strings that should not be present
         if should_not_contain:

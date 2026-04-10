@@ -3,15 +3,13 @@ Integration tests for Context Memory functionality in CSV QA Bot.
 
 These tests verify that the context memory system correctly:
 - Stores and retrieves conversation history
-- Detects follow-up questions 
+- Detects follow-up questions
 - Applies context filtering for "these records" queries
 - Handles aggregation on filtered data
 - Resolves pronouns and references
 """
-import subprocess
+
 import os
-import re
-import pytest
 from csv_qa.question_answerer import CSVQuestionAnswerer
 
 
@@ -20,18 +18,12 @@ class TestContextMemoryIntegration:
 
     def setup_method(self, method):
         """Set up test environment for each test method."""
-        self.project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../.."))
+        self.project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
         self.sample_data_dir = os.path.join(self.project_root, "sample_data")
-        self.sound_measurements_csv = os.path.join(
-            self.sample_data_dir, "sound_measurements.csv")
+        self.sound_measurements_csv = os.path.join(self.sample_data_dir, "sound_measurements.csv")
 
         # Create QA instance with context memory enabled and debug mode for testing
-        self.qa = CSVQuestionAnswerer(
-            model_name="llama3.2:1b",
-
-            enable_context_memory=True
-        )
+        self.qa = CSVQuestionAnswerer(model_name="llama3.2:1b", enable_context_memory=True)
 
     def test_basic_context_memory_storage(self):
         """Test that context memory stores conversation turns correctly."""
@@ -58,17 +50,16 @@ class TestContextMemoryIntegration:
 
         # Ask initial question about festivals
         question1 = "show me records where EventType is Festival"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Ask follow-up with pronoun
         question2 = "what is the average DecibelsA in them?"
-        follow_up_info = self.qa.context_memory.detect_follow_up_intent(
-            question2)
+        follow_up_info = self.qa.context_memory.detect_follow_up_intent(question2)
 
         # Verify follow-up detection
-        assert follow_up_info['is_follow_up'] is True
-        assert follow_up_info['reference_type'] == 'pronoun'
-        assert len(follow_up_info['referenced_turns']) > 0
+        assert follow_up_info["is_follow_up"] is True
+        assert follow_up_info["reference_type"] == "pronoun"
+        assert len(follow_up_info["referenced_turns"]) > 0
 
     def test_follow_up_detection_with_these_records(self):
         """Test detection of 'these records' follow-up questions."""
@@ -76,16 +67,15 @@ class TestContextMemoryIntegration:
 
         # Ask initial filtering question
         question1 = "list records where EventType is Traffic"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Ask follow-up with "these records"
         question2 = "what is the max FrequencyRange in these records?"
-        follow_up_info = self.qa.context_memory.detect_follow_up_intent(
-            question2)
+        follow_up_info = self.qa.context_memory.detect_follow_up_intent(question2)
 
         # Verify follow-up detection
-        assert follow_up_info['is_follow_up'] is True
-        assert 'these records' in question2.lower()
+        assert follow_up_info["is_follow_up"] is True
+        assert "these records" in question2.lower()
 
     def test_context_filtering_basic(self):
         """Test basic context filtering functionality."""
@@ -93,7 +83,7 @@ class TestContextMemoryIntegration:
 
         # Ask initial filtering question
         question1 = "show records where EventType is Traffic"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Check that context filter info is extracted
         context_filter = self.qa.context_memory.get_context_data_filter(
@@ -101,9 +91,9 @@ class TestContextMemoryIntegration:
         )
 
         assert context_filter is not None
-        assert 'filter_column' in context_filter
-        assert context_filter['filter_column'].lower() == 'eventtype'
-        assert context_filter['filter_value'].lower() == 'traffic'
+        assert "filter_column" in context_filter
+        assert context_filter["filter_column"].lower() == "eventtype"
+        assert context_filter["filter_value"].lower() == "traffic"
 
     def test_aggregation_on_filtered_data(self):
         """Test aggregation operations on context-filtered data."""
@@ -134,16 +124,13 @@ class TestContextMemoryIntegration:
 
         # Filter for Event type records
         question1 = "list records where EventType is Event"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Ask multiple aggregation questions
         questions_and_keywords = [
-            ("what is the max DecibelsA in these records?",
-             ["max", "decibels"]),
-            ("what is the min DecibelsA in these records?",
-             ["min", "decibels"]),
-            ("what is the average Duration in these records?",
-             ["average", "duration"]),
+            ("what is the max DecibelsA in these records?", ["max", "decibels"]),
+            ("what is the min DecibelsA in these records?", ["min", "decibels"]),
+            ("what is the average Duration in these records?", ["average", "duration"]),
         ]
 
         for question, keywords in questions_and_keywords:
@@ -151,8 +138,7 @@ class TestContextMemoryIntegration:
 
             # Each answer should contain the relevant keywords
             for keyword in keywords:
-                assert keyword.lower() in answer.lower(
-                ), f"Answer should contain '{keyword}'"
+                assert keyword.lower() in answer.lower(), f"Answer should contain '{keyword}'"
 
             # Should not search through all records
             assert "57" not in answer, "Should not search through all 57 records"
@@ -163,16 +149,15 @@ class TestContextMemoryIntegration:
 
         # Test with Location filtering
         question1 = "show records with Location Urban Park"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         question2 = "how many records are in these results?"
-        context_filter = self.qa.context_memory.get_context_data_filter(
-            question2)
+        context_filter = self.qa.context_memory.get_context_data_filter(question2)
 
         if context_filter:
-            assert 'filter_column' in context_filter
-            assert context_filter['filter_column'].lower() == 'location'
-            assert 'urban park' in context_filter['filter_value'].lower()
+            assert "filter_column" in context_filter
+            assert context_filter["filter_column"].lower() == "location"
+            assert "urban park" in context_filter["filter_value"].lower()
 
     def test_pronoun_resolution(self):
         """Test pronoun resolution in follow-up questions."""
@@ -180,21 +165,17 @@ class TestContextMemoryIntegration:
 
         # Ask about Festival records
         question1 = "list records where EventType is Festival"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Ask follow-up with pronoun
         question2 = "what is the average DecibelsA in them?"
 
         # Get the enhanced question with pronoun resolution
-        context_info = self.qa.context_memory.detect_follow_up_intent(
-            question2)
-        enhanced_question = self.qa._resolve_pronouns_with_context(
-            question2, context_info['referenced_turns']
-        )
+        context_info = self.qa.context_memory.detect_follow_up_intent(question2)
+        enhanced_question = self.qa._resolve_pronouns_with_context(question2, context_info["referenced_turns"])
 
         # Enhanced question should have more context
-        assert "festival" in enhanced_question.lower(
-        ) or "eventtype" in enhanced_question.lower()
+        assert "festival" in enhanced_question.lower() or "eventtype" in enhanced_question.lower()
 
     def test_conversation_memory_limits(self):
         """Test that conversation memory respects configured limits."""
@@ -222,8 +203,7 @@ class TestContextMemoryIntegration:
 
         # Ask some questions
         self.qa.answer_question("show records where EventType is Traffic")
-        self.qa.answer_question(
-            "what is the max FrequencyRange in these records?")
+        self.qa.answer_question("what is the max FrequencyRange in these records?")
 
         # Save conversation history
         temp_file = os.path.join(self.project_root, "temp_conversation.json")
@@ -231,11 +211,7 @@ class TestContextMemoryIntegration:
             self.qa.save_conversation_history(temp_file)
 
             # Create new instance and load history
-            new_qa = CSVQuestionAnswerer(
-                model_name="llama3.2:1b",
-    
-                enable_context_memory=True
-            )
+            new_qa = CSVQuestionAnswerer(model_name="llama3.2:1b", enable_context_memory=True)
             new_qa.load_csv(self.sound_measurements_csv)
             new_qa.load_conversation_history(temp_file)
 
@@ -250,18 +226,12 @@ class TestContextMemoryIntegration:
     def test_context_memory_disabled(self):
         """Test behavior when context memory is disabled."""
         # Create QA instance with context memory disabled
-        qa_no_context = CSVQuestionAnswerer(
-            model_name="llama3.2:1b",
-
-            enable_context_memory=False
-        )
+        qa_no_context = CSVQuestionAnswerer(model_name="llama3.2:1b", enable_context_memory=False)
         qa_no_context.load_csv(self.sound_measurements_csv)
 
         # Ask questions
-        answer1 = qa_no_context.answer_question(
-            "show records where EventType is Traffic")
-        answer2 = qa_no_context.answer_question(
-            "what is the max FrequencyRange in these records?")
+        qa_no_context.answer_question("show records where EventType is Traffic")  # execute for side effect
+        answer2 = qa_no_context.answer_question("what is the max FrequencyRange in these records?")
 
         # Context memory should be None
         assert qa_no_context.context_memory is None
@@ -291,8 +261,7 @@ class TestContextMemoryIntegration:
 
             # Check that context is being maintained
             if i > 0:  # After first question
-                assert len(
-                    self.qa.context_memory.conversation_history) == i + 1
+                assert len(self.qa.context_memory.conversation_history) == i + 1
 
     def test_edge_case_empty_filter_results(self):
         """Test handling when context filter returns no results."""
@@ -300,7 +269,7 @@ class TestContextMemoryIntegration:
 
         # Ask for records that don't exist
         question1 = "show records where EventType is NonExistent"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         # Ask follow-up question
         question2 = "what is the max DecibelsA in these records?"
@@ -315,7 +284,7 @@ class TestContextMemoryIntegration:
 
         # Ask with different case
         question1 = "show records where eventtype is traffic"  # lowercase
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         question2 = "what is the MAX frequencyrange in these records?"  # mixed case
         answer2 = self.qa.answer_question(question2)
@@ -330,8 +299,7 @@ class TestContextMemoryIntegration:
 
         # Have a conversation
         self.qa.answer_question("show records where EventType is Festival")
-        self.qa.answer_question(
-            "what is the average DecibelsA in these records?")
+        self.qa.answer_question("what is the average DecibelsA in these records?")
         self.qa.answer_question("how many festival records are there?")
 
         # Get conversation summary
@@ -365,17 +333,11 @@ class TestContextMemoryEdgeCases:
 
     def setup_method(self, method):
         """Set up test environment."""
-        self.project_root = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "../.."))
+        self.project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
         self.sample_data_dir = os.path.join(self.project_root, "sample_data")
-        self.sound_measurements_csv = os.path.join(
-            self.sample_data_dir, "sound_measurements.csv")
+        self.sound_measurements_csv = os.path.join(self.sample_data_dir, "sound_measurements.csv")
 
-        self.qa = CSVQuestionAnswerer(
-            model_name="llama3.2:1b",
-
-            enable_context_memory=True
-        )
+        self.qa = CSVQuestionAnswerer(model_name="llama3.2:1b", enable_context_memory=True)
 
     def test_ambiguous_pronoun_reference(self):
         """Test handling of ambiguous pronoun references."""
@@ -411,8 +373,7 @@ class TestContextMemoryEdgeCases:
                 self.qa.answer_question(f"{question} (iteration {i})")
 
         # Should respect memory limits and not crash
-        assert len(
-            self.qa.context_memory.conversation_history) <= self.qa.context_memory.max_turns
+        assert len(self.qa.context_memory.conversation_history) <= self.qa.context_memory.max_turns
 
     def test_malformed_follow_up_questions(self):
         """Test handling of malformed follow-up questions."""
@@ -442,7 +403,7 @@ class TestContextMemoryEdgeCases:
 
         # This test may not have data with special characters, but tests robustness
         question1 = "show records where Notes contains 'traffic'"
-        answer1 = self.qa.answer_question(question1)
+        self.qa.answer_question(question1)  # execute for side effect (sets context)
 
         question2 = "how many records are in these results?"
         answer2 = self.qa.answer_question(question2)

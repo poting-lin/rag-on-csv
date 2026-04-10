@@ -26,20 +26,13 @@ def configure_logging(debug: bool) -> None:
 def main() -> None:
     """Main entry point for the CSV Question Answering Bot."""
     parser = argparse.ArgumentParser(description="CSV Question Answering Bot")
-    parser.add_argument(
-        "-f", "--file", default="sample_data/lab_data.csv", help="Path to CSV file")
-    parser.add_argument("-d", "--debug", action="store_true",
-                        help="Enable debug mode")
-    parser.add_argument("-m", "--model", default="llama3.2:1b",
-                        help="Ollama model to use")
-    parser.add_argument("-i", "--interactive", action="store_true",
-                        help="Enable interactive mode with suggestions")
-    parser.add_argument("--no-context", action="store_true",
-                        help="Disable context memory")
-    parser.add_argument(
-        "--save-history", help="Save conversation history to file on exit")
-    parser.add_argument(
-        "--load-history", help="Load conversation history from file on startup")
+    parser.add_argument("-f", "--file", default="sample_data/lab_data.csv", help="Path to CSV file")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode")
+    parser.add_argument("-m", "--model", default="llama3.2:1b", help="Ollama model to use")
+    parser.add_argument("-i", "--interactive", action="store_true", help="Enable interactive mode with suggestions")
+    parser.add_argument("--no-context", action="store_true", help="Disable context memory")
+    parser.add_argument("--save-history", help="Save conversation history to file on exit")
+    parser.add_argument("--load-history", help="Load conversation history from file on startup")
     args = parser.parse_args()
 
     configure_logging(args.debug)
@@ -169,8 +162,7 @@ def _handle_slash_command(
     stripped = q.strip()
 
     if stripped == "/q" or any(
-        kw in q.lower()
-        for kw in ["help", "what questions", "example", "examples", "what can i ask"]
+        kw in q.lower() for kw in ["help", "what questions", "example", "examples", "what can i ask"]
     ):
         print("\nHere are some questions you can ask about this CSV:")
         suggested_questions = qa.generate_suggested_questions(csv_file)
@@ -199,9 +191,7 @@ def _handle_slash_command(
     return False
 
 
-def _handle_interactive_question(
-    qa: CSVQuestionAnswerer, csv_file: str, question: str
-) -> None:
+def _handle_interactive_question(qa: CSVQuestionAnswerer, csv_file: str, question: str) -> None:
     """Handle a question in interactive mode with suggestions."""
     result = qa.process_question_with_suggestions(csv_file, question)
 
@@ -217,8 +207,7 @@ def _handle_interactive_question(
         return
 
     if any(cmd in answer.lower() for cmd in ["summarize", "list", "count"]):
-        confirmation = input(
-            "Would you like to use the corrected command? (yes/no): ").strip().lower()
+        confirmation = input("Would you like to use the corrected command? (yes/no): ").strip().lower()
         if confirmation in ("yes", "y") and len(suggested_values) == 1:
             corrected_command = suggested_values[0]
             print(f"\nExecuting command: {corrected_command}")
@@ -229,8 +218,7 @@ def _handle_interactive_question(
                 print("\nAnswer:", answer)
             print("-" * 40)
     else:
-        confirmation = input(
-            "Would you like to use one of the suggested values? (yes/no): ").strip().lower()
+        confirmation = input("Would you like to use one of the suggested values? (yes/no): ").strip().lower()
         if confirmation not in ("yes", "y"):
             return
 
@@ -245,8 +233,7 @@ def _handle_interactive_question(
             for i, suggestion in enumerate(suggested_values, 1):
                 print(f"{i}. {suggestion}")
 
-            choice = input(
-                "Enter the number of your choice (or press Enter to skip): ").strip()
+            choice = input("Enter the number of your choice (or press Enter to skip): ").strip()
             if choice.isdigit() and 1 <= int(choice) <= len(suggested_values):
                 new_question = suggested_values[int(choice) - 1]
                 print(f"\nSearching for: {new_question}")
@@ -255,9 +242,7 @@ def _handle_interactive_question(
                 print("-" * 40)
 
 
-def _handle_standard_question(
-    qa: CSVQuestionAnswerer, csv_file: str, question: str
-) -> None:
+def _handle_standard_question(qa: CSVQuestionAnswerer, csv_file: str, question: str) -> None:
     """Handle a question in standard (non-interactive) mode."""
     answer = qa.answer_question(question, csv_file)
 

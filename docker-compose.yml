@@ -27,5 +27,32 @@ services:
       ollama:
         condition: service_healthy
 
+  lint:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - .:/app
+    command: ["ruff", "check", "--fix", "."]
+    profiles: [dev]
+
+  format:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - .:/app
+    command: ["ruff", "format", "."]
+    profiles: [dev]
+
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    volumes:
+      - .:/app
+    command: ["pytest"]
+    profiles: [dev]
+
 volumes:
   ollama_models:

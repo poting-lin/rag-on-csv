@@ -1,4 +1,5 @@
 """Unit tests for OllamaAPIClient configuration."""
+
 import os
 from unittest.mock import patch
 
