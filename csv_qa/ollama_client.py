@@ -3,6 +3,7 @@ Ollama API Client module for interacting with the Ollama API.
 """
 import logging
 import json
+import os
 import re
 
 import requests
@@ -22,7 +23,8 @@ class OllamaAPIClient:
     def __init__(self, model_name: str = "llama3.2:1b") -> None:
         """Initialize the Ollama API client."""
         self.model_name = model_name
-        self.api_url = "http://localhost:11434/api/generate"
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.api_url = f"{base_url}/api/generate"
 
     def set_model(self, model_name: str) -> None:
         """Set the model to use for API calls."""
