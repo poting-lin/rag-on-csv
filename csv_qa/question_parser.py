@@ -1,6 +1,7 @@
 """
 Question Parser module for extracting information from user questions.
 """
+
 import logging
 import re
 from difflib import get_close_matches
@@ -17,8 +18,20 @@ class QuestionParser:
 
         # Define known commands for spell checking
         self.known_commands = [
-            "summarize", "list", "count", "filter", "show", "find",
-            "get", "display", "aggregate", "average", "mean", "sum", "min", "max"
+            "summarize",
+            "list",
+            "count",
+            "filter",
+            "show",
+            "find",
+            "get",
+            "display",
+            "aggregate",
+            "average",
+            "mean",
+            "sum",
+            "min",
+            "max",
         ]
 
         # Help query patterns
@@ -28,7 +41,7 @@ class QuestionParser:
             r"help me",
             r"show me example questions",
             r"give me examples",
-            r"how to use"
+            r"how to use",
         ]
 
     def is_relevant_question(self, question: str) -> bool:
@@ -68,26 +81,16 @@ class QuestionParser:
         for pattern in self.help_patterns:
             if re.search(pattern, question.lower()):
                 logger.debug("Detected help query: %s", question)
-                return {
-                    'command': 'help',
-                    'operation': 'suggest_questions',
-                    'is_help_query': True
-                }
+                return {"command": "help", "operation": "suggest_questions", "is_help_query": True}
 
         # Check for special commands like summarize, list, count
-        command_patterns = [
-            r"summarize",
-            r"list",
-            r"count"
-        ]
+        command_patterns = [r"summarize", r"list", r"count"]
 
         # First check for exact matches
         for pattern in command_patterns:
             match = re.search(pattern, question)
             if match:
-                command_info = {
-                    'command': pattern
-                }
+                command_info = {"command": pattern}
                 break
 
         # If no exact match, check for possible typos
@@ -102,22 +105,25 @@ class QuestionParser:
                     continue
 
                 # Find closest matches
-                close_matches = get_close_matches(
-                    word, self.known_commands, n=1, cutoff=0.75)
+                close_matches = get_close_matches(word, self.known_commands, n=1, cutoff=0.75)
 
                 if close_matches:
                     closest_match = close_matches[0]
                     logger.debug("Detected possible typo: '%s' -> '%s'", word, closest_match)
 
                     # Check if the closest match is one of our command patterns
-                    if closest_match in [p.strip() for p in command_patterns] or closest_match in ["summarize", "list", "count"]:
+                    if closest_match in [p.strip() for p in command_patterns] or closest_match in [
+                        "summarize",
+                        "list",
+                        "count",
+                    ]:
                         logger.debug("Detected command typo: '%s' -> '%s'", word, closest_match)
                         command_info = {
-                            'command': closest_match,
-                            'original': word,
-                            'auto_correct': True  # Mark for auto-correction without asking
+                            "command": closest_match,
+                            "original": word,
+                            "auto_correct": True,  # Mark for auto-correction without asking
                         }
-                        return {'command_correction': closest_match}
+                        return {"command_correction": closest_match}
                         break
 
         # Check for numerical comparison patterns like "price above 10" or "books that price > 11"
@@ -128,15 +134,14 @@ class QuestionParser:
             comparison_patterns = [
                 # Above patterns
                 rf"(?:.*\s)?{col_lower}\s+(?:above|over|greater than|more than|>|>=|higher than)\s+(\d+(?:\.\d+)?)",
-                rf"(?:.*\s)?{col_lower}\s+(?:is|are)\s+(?:above|over|greater than|more than|>|>=|higher than)\s+(\d+(?:\.\d+)?)",
-
+                rf"(?:.*\s)?{col_lower}\s+(?:is|are)\s+"
+                rf"(?:above|over|greater than|more than|>|>=|higher than)\s+(\d+(?:\.\d+)?)",
                 # Below patterns
                 rf"(?:.*\s)?{col_lower}\s+(?:below|under|less than|<|<=|lower than)\s+(\d+(?:\.\d+)?)",
                 rf"(?:.*\s)?{col_lower}\s+(?:is|are)\s+(?:below|under|less than|<|<=|lower than)\s+(\d+(?:\.\d+)?)",
-
                 # Equal patterns
                 rf"(?:.*\s)?{col_lower}\s+(?:equal to|equals|=|==)\s+(\d+(?:\.\d+)?)",
-                rf"(?:.*\s)?{col_lower}\s+(?:is|are)\s+(\d+(?:\.\d+)?)"
+                rf"(?:.*\s)?{col_lower}\s+(?:is|are)\s+(\d+(?:\.\d+)?)",
             ]
 
             for i, pattern in enumerate(comparison_patterns):
@@ -152,11 +157,7 @@ class QuestionParser:
                     else:
                         operator = "="
 
-                    comparison_info = {
-                        'column': col,
-                        'operator': operator,
-                        'value': value
-                    }
+                    comparison_info = {"column": col, "operator": operator, "value": value}
 
                     # If we find a column name in the beginning of the question, it might be the target
                     words = question.split()
@@ -176,7 +177,7 @@ class QuestionParser:
             target_patterns = [
                 rf"what(?:'s| is| are) (?:the |)({col_lower})",
                 rf"(?:tell|show|give) me (?:the |)({col_lower})",
-                rf"(?:find|get|retrieve) (?:the |)({col_lower})"
+                rf"(?:find|get|retrieve) (?:the |)({col_lower})",
             ]
 
             for pattern in target_patterns:
@@ -215,8 +216,7 @@ class QuestionParser:
                         potential_value = words[col_index + 1]
 
                         # Remove any punctuation
-                        potential_value = re.sub(
-                            r'[^\w\s]', '', potential_value)
+                        potential_value = re.sub(r"[^\w\s]", "", potential_value)
 
                         if potential_value:
                             id_value = potential_value
@@ -230,7 +230,7 @@ class QuestionParser:
                 if question.strip().lower().startswith(col_lower):
                     id_column = col
                     # Extract the value after the column name
-                    value_part = question.strip()[len(col_lower):].strip()
+                    value_part = question.strip()[len(col_lower) :].strip()
                     if value_part:
                         id_value = value_part
                         break
@@ -252,7 +252,7 @@ class QuestionParser:
             command_word_index = -1
 
             for i, word in enumerate(words):
-                if command_info['command'] in word:
+                if command_info["command"] in word:
                     command_word_index = i
                     break
 
@@ -266,26 +266,26 @@ class QuestionParser:
                             command_columns.append(col)
 
                 if command_columns:
-                    command_info['columns'] = command_columns
+                    command_info["columns"] = command_columns
 
             # Set operation type based on command
-            if command_info['command'] == 'summarize':
-                command_info['operation'] = 'summarize'
-            elif command_info['command'] == 'list':
-                command_info['operation'] = 'list'
-            elif command_info['command'] == 'count':
-                command_info['operation'] = 'count'
+            if command_info["command"] == "summarize":
+                command_info["operation"] = "summarize"
+            elif command_info["command"] == "list":
+                command_info["operation"] = "list"
+            elif command_info["command"] == "count":
+                command_info["operation"] = "count"
 
         # Build the result dictionary
         result = {}
         if target_column:
-            result['target_column'] = target_column
+            result["target_column"] = target_column
         if id_column:
-            result['id_column'] = id_column
+            result["id_column"] = id_column
         if id_value:
-            result['id_value'] = id_value
+            result["id_value"] = id_value
         if comparison_info:
-            result['comparison_info'] = comparison_info
+            result["comparison_info"] = comparison_info
         if command_info:
             # Merge command_info dictionary into the result
             result.update(command_info)

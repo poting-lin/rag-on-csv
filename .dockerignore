@@ -1,0 +1,10 @@
+.git
+.gitignore
+.mypy_cache
+.pytest_cache
+.claude
+__pycache__
+tests
+docs
+*.md
+context_memory_demo.py

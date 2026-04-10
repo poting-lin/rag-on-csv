@@ -1,6 +1,7 @@
 """
 Vector Search Engine module for semantic search in CSV data.
 """
+
 import hashlib
 import logging
 

@@ -33,13 +33,11 @@ def demo_context_memory():
         ("list all researchers", "Initial question - no context needed"),
         ("what about their labs?", "Follow-up using 'what about' - should use context"),
         ("show me the equipment", "New topic - equipment"),
-        ("how many of them are there?",
-         "Follow-up using pronoun 'them' - should refer to equipment"),
+        ("how many of them are there?", "Follow-up using pronoun 'them' - should refer to equipment"),
         ("what instruments does Dr. Smith use?", "Specific researcher question"),
         ("what about Dr. Chen?", "Follow-up about another researcher"),
         ("summarize the data", "General summary request"),
-        ("show me more details about that",
-         "Follow-up using 'that' - should refer to previous summary")
+        ("show me more details about that", "Follow-up using 'that' - should refer to previous summary"),
     ]
 
     for i, (question, description) in enumerate(conversation_pairs, 1):
@@ -128,17 +126,17 @@ def interactive_demo():
         try:
             question = input("\n❓ Your question: ").strip()
 
-            if question.lower() in ['quit', 'exit', '']:
+            if question.lower() in ["quit", "exit", ""]:
                 break
-            elif question == '/summary':
+            elif question == "/summary":
                 print("📊 Conversation Summary:")
                 print(qa.get_conversation_summary())
                 continue
-            elif question == '/clear':
+            elif question == "/clear":
                 qa.clear_conversation_history()
                 print("🗑️ Conversation history cleared.")
                 continue
-            elif question == '/q':
+            elif question == "/q":
                 print("🔍 Example questions:")
                 print(qa.generate_suggested_questions())
                 continue
@@ -166,9 +164,8 @@ if __name__ == "__main__":
     demo_context_features()
 
     # Ask if user wants interactive demo
-    response = input(
-        "\nWould you like to try the interactive demo? (y/n): ").strip().lower()
-    if response in ['y', 'yes']:
+    response = input("\nWould you like to try the interactive demo? (y/n): ").strip().lower()
+    if response in ["y", "yes"]:
         interactive_demo()
 
     print("\n🎉 Context Memory Demo Complete!")

@@ -12,14 +12,19 @@ A web interface for the RAG-based CSV question answering system with:
 - Download results
 """
 
+import json
 import logging
 import os
-import subprocess
 import tempfile
+import time
+from enum import Enum
+
+import requests as http_requests
 
 import pandas as pd
 import streamlit as st
 
+from csv_qa.config import POPULAR_MODELS
 from csv_qa.question_answerer import CSVQuestionAnswerer
 from csv_qa.exceptions import (
     CSVQAError,
@@ -44,24 +49,92 @@ def configure_logging(debug_mode: bool = False) -> None:
     logging.getLogger("csv_qa").setLevel(level)
 
 
-def get_ollama_models() -> list[str]:
-    """Get list of available Ollama models."""
+class OllamaStatus(Enum):
+    """Ollama service readiness status."""
+
+    OLLAMA_DOWN = "ollama_down"
+    MODEL_DOWNLOADING = "model_downloading"
+    READY = "ready"
+
+
+def check_ollama_ready() -> OllamaStatus:
+    """Check if Ollama is running and the model is available.
+
+    Returns:
+        OllamaStatus indicating the current state.
+    """
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    model_name = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
     try:
-        result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, timeout=10
+        resp = http_requests.get(f"{base_url}/api/tags", timeout=3)
+        resp.raise_for_status()
+        models = resp.json().get("models", [])
+        for model in models:
+            if model.get("name", "").startswith(model_name):
+                return OllamaStatus.READY
+        return OllamaStatus.MODEL_DOWNLOADING
+    except Exception:
+        return OllamaStatus.OLLAMA_DOWN
+
+
+def get_ollama_models() -> list[str]:
+    """Get list of available Ollama models via HTTP API.
+
+    Uses the Ollama REST API instead of the CLI binary, so it works both
+    locally and inside Docker (where the ollama binary is not installed).
+    """
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    try:
+        resp = http_requests.get(f"{base_url}/api/tags", timeout=5)
+        resp.raise_for_status()
+        models = []
+        for model in resp.json().get("models", []):
+            name = model.get("name", "")
+            if name:
+                models.append(name)
+        return models
+    except Exception:
+        return []
+
+
+def pull_ollama_model(model_name: str) -> bool:
+    """Pull a model from Ollama, showing download progress in Streamlit.
+
+    Args:
+        model_name: The model name to pull (e.g. 'llama3.2:3b').
+
+    Returns:
+        True if the pull succeeded, False otherwise.
+    """
+    base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+    try:
+        resp = http_requests.post(
+            f"{base_url}/api/pull",
+            json={"name": model_name},
+            stream=True,
+            timeout=600,
         )
-        if result.returncode == 0:
-            lines = result.stdout.strip().split("\n")
-            models = []
-            for line in lines[1:]:
-                if line.strip():
-                    model_name = line.split()[0]
-                    if model_name and ":" in model_name:
-                        models.append(model_name)
-            return models
-        return []
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-        return []
+        resp.raise_for_status()
+
+        progress_bar = st.progress(0, text=f"Downloading {model_name}...")
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            status = data.get("status", "")
+            total = data.get("total", 0)
+            completed = data.get("completed", 0)
+            if total > 0:
+                pct = completed / total
+                progress_bar.progress(pct, text=f"{status}: {completed / 1e9:.1f} / {total / 1e9:.1f} GB")
+            else:
+                progress_bar.progress(0, text=status)
+        progress_bar.progress(1.0, text=f"{model_name} downloaded successfully!")
+        return True
+    except Exception as e:
+        logger.error("Failed to pull model %s: %s", model_name, e)
+        st.error(f"Failed to download {model_name}: {e}")
+        return False
 
 
 def initialize_session_state() -> None:
@@ -78,9 +151,7 @@ def initialize_session_state() -> None:
         st.session_state.suggested_questions = []
 
 
-def create_qa_instance(
-    model_name: str, enable_context_memory: bool
-) -> CSVQuestionAnswerer | None:
+def create_qa_instance(model_name: str, enable_context_memory: bool) -> CSVQuestionAnswerer | None:
     """Create and configure QA instance."""
     try:
         return CSVQuestionAnswerer(
@@ -120,11 +191,7 @@ def display_conversation_history() -> None:
     if st.session_state.conversation_history:
         st.subheader("Conversation History")
         for i, (question, answer) in enumerate(st.session_state.conversation_history):
-            question_preview = (
-                f"Q{i + 1}: {question[:50]}..."
-                if len(question) > 50
-                else f"Q{i + 1}: {question}"
-            )
+            question_preview = f"Q{i + 1}: {question[:50]}..." if len(question) > 50 else f"Q{i + 1}: {question}"
             with st.expander(question_preview, expanded=False):
                 st.write("**Question:**", question)
                 st.write("**Answer:**", answer)
@@ -194,7 +261,7 @@ def process_question(
     except CSVQAError as e:
         st.error(f"Error: {e.user_message}")
         return e.user_message, [], False
-    except Exception as e:
+    except Exception:
         logger.error("Unhandled exception processing question", exc_info=True)
         error_msg = "An unexpected error occurred. Enable debug mode for details."
         st.error(error_msg)
@@ -212,6 +279,37 @@ def main() -> None:
 
     initialize_session_state()
 
+    # Fix selectbox dropdown clipping inside sidebar expanders
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] [data-testid="stExpander"] {
+            overflow: visible;
+        }
+        [data-testid="stSidebar"] {
+            overflow: visible;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Check Ollama readiness (useful in Docker where model may still be downloading)
+    status = check_ollama_ready()
+    if status != OllamaStatus.READY:
+        st.title("CSV Question Answering Bot")
+        if status == OllamaStatus.OLLAMA_DOWN:
+            st.status("Waiting for Ollama service to start...", state="running")
+        else:
+            model_name = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+            st.status(
+                f"Downloading model {model_name}... This may take a few minutes on first run.",
+                state="running",
+            )
+        time.sleep(3)
+        st.rerun()
+        return
+
     st.title("CSV Question Answering Bot")
     st.markdown("Ask natural language questions about your CSV data!")
 
@@ -226,37 +324,26 @@ def main() -> None:
                 "Ollama Model",
                 available_models,
                 index=0,
-                help="Select the Ollama model to use for question answering",
+                help="Select from models available in your Ollama instance",
             )
         else:
-            st.error("No Ollama models found!")
-            st.markdown(
-                """
-            **To download models, run these commands in your terminal:**
-            ```bash
-            ollama pull llama3.2:1b      # Small, fast model
-            ollama pull llama3.2:3b      # Better quality
-            ollama pull llama3.1:8b      # High quality
-            ```
+            st.warning("No models available yet. Download one below.")
+            model_name = "llama3.2:1b"
 
-            **Then refresh this page.**
-            """
-            )
-
-            st.warning("Using fallback model selection:")
-            fallback_models = [
-                "llama3.2:1b",
-                "llama3.2:3b",
-                "llama3.1:8b",
-                "mistral",
-                "codellama",
-            ]
-            model_name = st.selectbox(
-                "Fallback Model (may not work)",
-                fallback_models,
-                index=0,
-                help="These models may not be available on your system",
-            )
+        # Download new model section
+        downloadable = [m for m in POPULAR_MODELS if m not in available_models]
+        if downloadable:
+            with st.expander("Download New Model"):
+                selected_model = st.selectbox(
+                    "Choose a model to download",
+                    downloadable,
+                    index=0,
+                    help="Select a model and click Pull to download it",
+                )
+                if st.button("Pull", use_container_width=True):
+                    if pull_ollama_model(selected_model):
+                        time.sleep(1)
+                        st.rerun()
 
         st.subheader("Features")
         enable_context_memory = st.checkbox(
@@ -295,9 +382,7 @@ def main() -> None:
                 "Sound Measurements": "sample_data/sound_measurements.csv",
             }
 
-            selected_sample = st.selectbox(
-                "Choose sample dataset", ["None"] + list(sample_options.keys())
-            )
+            selected_sample = st.selectbox("Choose sample dataset", ["None"] + list(sample_options.keys()))
 
             if selected_sample != "None" and os.path.exists(sample_options[selected_sample]):
                 uploaded_file = sample_options[selected_sample]
@@ -313,9 +398,7 @@ def main() -> None:
             or getattr(st.session_state, "current_context", None) != enable_context_memory
         ):
             with st.spinner("Initializing Q&A system..."):
-                st.session_state.qa_instance = create_qa_instance(
-                    model_name, enable_context_memory
-                )
+                st.session_state.qa_instance = create_qa_instance(model_name, enable_context_memory)
                 st.session_state.current_model = model_name
                 st.session_state.current_context = enable_context_memory
 
@@ -325,32 +408,24 @@ def main() -> None:
                     if isinstance(uploaded_file, str):
                         csv_file_path = uploaded_file
                         try:
-                            st.session_state.csv_columns = (
-                                st.session_state.qa_instance.load_csv(csv_file_path)
-                            )
+                            st.session_state.csv_columns = st.session_state.qa_instance.load_csv(csv_file_path)
                             df = pd.read_csv(csv_file_path)
                         except DataLoadError as e:
                             st.error(f"Failed to load CSV: {e.detail}")
                             csv_file_path = None
                             df = None
                     else:
-                        csv_file_path, columns, df = load_csv_file(
-                            uploaded_file, st.session_state.qa_instance
-                        )
+                        csv_file_path, columns, df = load_csv_file(uploaded_file, st.session_state.qa_instance)
                         st.session_state.csv_columns = columns
 
                     if csv_file_path and df is not None:
                         st.session_state.current_csv_file = uploaded_file
                         st.session_state.current_csv_path = csv_file_path
-                        st.success(
-                            f"CSV loaded successfully! Found {len(df)} rows and {len(df.columns)} columns."
-                        )
+                        st.success(f"CSV loaded successfully! Found {len(df)} rows and {len(df.columns)} columns.")
 
                         with st.spinner("Generating suggested questions..."):
-                            suggested_questions = (
-                                st.session_state.qa_instance.generate_suggested_questions(
-                                    csv_file_path
-                                )
+                            suggested_questions = st.session_state.qa_instance.generate_suggested_questions(
+                                csv_file_path
                             )
                             st.session_state.suggested_questions = suggested_questions
 
@@ -380,8 +455,7 @@ def main() -> None:
                             "Type": df.dtypes.astype(str),
                             "Non-Null Count": df.count(),
                             "Sample Values": [
-                                ", ".join(df[col].dropna().astype(str).unique()[:3])
-                                for col in df.columns
+                                ", ".join(df[col].dropna().astype(str).unique()[:3]) for col in df.columns
                             ],
                         }
                     )
@@ -419,9 +493,7 @@ def main() -> None:
             col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
 
             with col_btn1:
-                ask_button = st.button(
-                    "Ask Question", type="primary", disabled=not question.strip()
-                )
+                ask_button = st.button("Ask Question", type="primary", disabled=not question.strip())
 
             with col_btn2:
                 if enable_context_memory:
@@ -484,9 +556,7 @@ def main() -> None:
 
 *Note: Load a CSV file to get specific suggested questions for your data.*
                             """
-                            st.session_state.conversation_history.append(
-                                (question, fallback_answer)
-                            )
+                            st.session_state.conversation_history.append((question, fallback_answer))
                             st.success("**General Help:**")
                             st.write(fallback_answer)
 
@@ -527,9 +597,7 @@ def main() -> None:
                                                 st.session_state.current_csv_path,
                                                 False,
                                             )
-                                            st.session_state.conversation_history.append(
-                                                (suggestion, corrected_answer)
-                                            )
+                                            st.session_state.conversation_history.append((suggestion, corrected_answer))
                                             st.rerun()
                         else:
                             st.success("**Answer:**")

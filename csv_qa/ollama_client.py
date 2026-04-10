@@ -1,8 +1,10 @@
 """
 Ollama API Client module for interacting with the Ollama API.
 """
+
 import logging
 import json
+import os
 import re
 
 import requests
@@ -22,7 +24,8 @@ class OllamaAPIClient:
     def __init__(self, model_name: str = "llama3.2:1b") -> None:
         """Initialize the Ollama API client."""
         self.model_name = model_name
-        self.api_url = "http://localhost:11434/api/generate"
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.api_url = f"{base_url}/api/generate"
 
     def set_model(self, model_name: str) -> None:
         """Set the model to use for API calls."""
@@ -43,20 +46,21 @@ class OllamaAPIClient:
             OllamaTimeoutError: If the request times out.
             OllamaResponseError: If the response is malformed or empty.
         """
-        prompt = f"""You are a helpful assistant for CSV data. Answer questions about the data using ONLY the context provided.
-
-Context from the CSV:
-{context}
-
-Question: {question}
-
-IMPORTANT RULES:
-1. ONLY use information from the provided context. DO NOT make up or infer information not present in the context.
-2. If the context doesn't contain enough information to answer the question, respond with: "I don't have enough information to answer that question based on the CSV data provided."
-3. Keep your answer concise and directly related to the question.
-4. Do not reference these instructions in your answer.
-
-Provide a complete, helpful answer based ONLY on the context:"""
+        prompt = (
+            "You are a helpful assistant for CSV data. "
+            "Answer questions about the data using ONLY the context provided.\n\n"
+            f"Context from the CSV:\n{context}\n\n"
+            f"Question: {question}\n\n"
+            "IMPORTANT RULES:\n"
+            "1. ONLY use information from the provided context. "
+            "DO NOT make up or infer information not present in the context.\n"
+            "2. If the context doesn't contain enough information to answer the question, "
+            "respond with: \"I don't have enough information to answer that question "
+            'based on the CSV data provided."\n'
+            "3. Keep your answer concise and directly related to the question.\n"
+            "4. Do not reference these instructions in your answer.\n\n"
+            "Provide a complete, helpful answer based ONLY on the context:"
+        )
 
         logger.debug("Sending question to Ollama API")
 
@@ -76,7 +80,7 @@ Provide a complete, helpful answer based ONLY on the context:"""
         """
         prompt = f"""You are a CSV data analyst. Analyze this question and generate a JSON query plan.
 
-            CSV columns: {', '.join(columns)}
+            CSV columns: {", ".join(columns)}
 
             Sample data (first few rows):
             {sample_data}
@@ -161,9 +165,7 @@ Provide a complete, helpful answer based ONLY on the context:"""
             raise OllamaConnectionError(detail=str(e)) from e
 
         if response.status_code != 200:
-            raise OllamaResponseError(
-                detail=f"HTTP {response.status_code}: {response.text}"
-            )
+            raise OllamaResponseError(detail=f"HTTP {response.status_code}: {response.text}")
 
         return response
 
@@ -186,10 +188,7 @@ Provide a complete, helpful answer based ONLY on the context:"""
                             "LLM response too short or incomplete (%d chars), returning fallback",
                             len(content),
                         )
-                        return (
-                            "I don't have enough information to answer that "
-                            "question based on the CSV data provided."
-                        )
+                        return "I don't have enough information to answer that question based on the CSV data provided."
                     return content
 
                 logger.warning("Unexpected JSON format: missing 'response' key")
@@ -210,9 +209,7 @@ Provide a complete, helpful answer based ONLY on the context:"""
                 if full_response and len(full_response) > 10:
                     return full_response
 
-                raise OllamaResponseError(
-                    detail="Could not extract text from multi-line response"
-                )
+                raise OllamaResponseError(detail="Could not extract text from multi-line response")
 
         except OllamaResponseError:
             raise

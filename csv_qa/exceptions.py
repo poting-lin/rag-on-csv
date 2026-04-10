@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+
 class CSVQAError(Exception):
     """Base exception for all CSV QA system errors."""
 
@@ -13,6 +14,7 @@ class CSVQAError(Exception):
         self.user_message = user_message
         self.detail = detail
         super().__init__(user_message)
+
 
 class DataLoadError(CSVQAError):
     """CSV file cannot be loaded (missing, encoding, corrupt format)."""
@@ -73,6 +75,7 @@ class OllamaModelNotFoundError(OllamaError):
             detail=detail,
         )
         self.model_name = model_name
+
 
 class QueryEngineError(CSVQAError):
     """Base exception for query engine failures."""

@@ -1,6 +1,7 @@
 """
 Enhanced Vector Search Engine - specifically designed for CSV data analysis.
 """
+
 import logging
 from typing import Any
 
@@ -41,21 +42,25 @@ class CSVAwareVectorSearch:
             col_info = self._analyze_column(df[col])
             chunk = f"Column {col}: {col_info['description']}"
             chunks.append(chunk)
-            metadata.append({
-                "type": "column_description",
-                "column": col,
-                "data_type": col_info["data_type"],
-            })
+            metadata.append(
+                {
+                    "type": "column_description",
+                    "column": col,
+                    "data_type": col_info["data_type"],
+                }
+            )
 
         # 2. Row-based chunks
         for idx, row in df.iterrows():
             row_desc = self._create_row_description(row, df.columns)
             chunks.append(f"Record {idx}: {row_desc}")
-            metadata.append({
-                "type": "data_record",
-                "row_index": idx,
-                "columns": df.columns.tolist(),
-            })
+            metadata.append(
+                {
+                    "type": "data_record",
+                    "row_index": idx,
+                    "columns": df.columns.tolist(),
+                }
+            )
             if idx >= 100:
                 break
 
@@ -70,26 +75,28 @@ class CSVAwareVectorSearch:
                 f"median={stats['50%']:.2f}"
             )
             chunks.append(chunk)
-            metadata.append({
-                "type": "statistical_summary",
-                "column": col,
-                "stats": stats.to_dict(),
-            })
+            metadata.append(
+                {
+                    "type": "statistical_summary",
+                    "column": col,
+                    "stats": stats.to_dict(),
+                }
+            )
 
         # 4. Categorical distribution chunks
         categorical_cols = df.select_dtypes(include=["object", "category"]).columns
         for col in categorical_cols:
             if df[col].nunique() <= 20:
                 top_values = df[col].value_counts().head(10)
-                chunk = f"{col} distribution: " + ", ".join(
-                    [f"{val}({count})" for val, count in top_values.items()]
-                )
+                chunk = f"{col} distribution: " + ", ".join([f"{val}({count})" for val, count in top_values.items()])
                 chunks.append(chunk)
-                metadata.append({
-                    "type": "categorical_distribution",
-                    "column": col,
-                    "distribution": top_values.to_dict(),
-                })
+                metadata.append(
+                    {
+                        "type": "categorical_distribution",
+                        "column": col,
+                        "distribution": top_values.to_dict(),
+                    }
+                )
 
         # 5. Column relationship chunks
         relationships = self._analyze_column_relationships(df)
@@ -191,9 +198,7 @@ class CSVAwareVectorSearch:
                     corr = correlations.iloc[i, j]
                     if abs(corr) > 0.5:
                         rel_type = "positively correlated" if corr > 0 else "negatively correlated"
-                        relationships.append(
-                            f"Columns {col1} and {col2} are {rel_type} with correlation {corr:.2f}"
-                        )
+                        relationships.append(f"Columns {col1} and {col2} are {rel_type} with correlation {corr:.2f}")
 
         categorical_cols = df.select_dtypes(include=["object", "category"]).columns
         if len(categorical_cols) > 1:
@@ -202,9 +207,7 @@ class CSVAwareVectorSearch:
                     if df[col1].nunique() <= 10 and df[col2].nunique() <= 10:
                         crosstab = pd.crosstab(df[col1], df[col2])
                         if crosstab.max().max() > len(df) * 0.3:
-                            relationships.append(
-                                f"Columns {col1} and {col2} show co-occurrence patterns"
-                            )
+                            relationships.append(f"Columns {col1} and {col2} show co-occurrence patterns")
 
         return relationships[:5]
 
@@ -217,9 +220,7 @@ class CSVAwareVectorSearch:
             for col in missing_cols[:3]:
                 missing_count = df[col].isnull().sum()
                 missing_pct = (missing_count / len(df)) * 100
-                quality_info.append(
-                    f"Column {col} has {missing_count} missing values ({missing_pct:.1f}%)"
-                )
+                quality_info.append(f"Column {col} has {missing_count} missing values ({missing_pct:.1f}%)")
 
         duplicate_count = df.duplicated().sum()
         if duplicate_count > 0:
@@ -230,9 +231,7 @@ class CSVAwareVectorSearch:
                 sample = df[col].dropna().head(100)
                 types = set(type(val).__name__ for val in sample)
                 if len(types) > 1:
-                    quality_info.append(
-                        f"Column {col} contains mixed data types: {', '.join(types)}"
-                    )
+                    quality_info.append(f"Column {col} contains mixed data types: {', '.join(types)}")
 
         return quality_info[:5]
 
@@ -334,10 +333,7 @@ class CSVAwareVectorSearch:
             boost_factor = 1.0
 
             if chunk_type == "statistical_summary":
-                if any(
-                    word in question_lower
-                    for word in ["average", "mean", "max", "min", "statistics", "analyze"]
-                ):
+                if any(word in question_lower for word in ["average", "mean", "max", "min", "statistics", "analyze"]):
                     boost_factor = 1.3
 
             elif chunk_type == "column_description":
@@ -347,23 +343,15 @@ class CSVAwareVectorSearch:
                         boost_factor = 1.5
 
             elif chunk_type == "data_record":
-                if any(
-                    word in question_lower for word in ["show", "find", "get", "where", "records"]
-                ):
+                if any(word in question_lower for word in ["show", "find", "get", "where", "records"]):
                     boost_factor = 1.2
 
             elif chunk_type == "column_relationship":
-                if any(
-                    word in question_lower
-                    for word in ["relationship", "correlate", "related", "connection"]
-                ):
+                if any(word in question_lower for word in ["relationship", "correlate", "related", "connection"]):
                     boost_factor = 1.4
 
             elif chunk_type == "categorical_distribution":
-                if any(
-                    word in question_lower
-                    for word in ["distribution", "count", "frequency", "how many"]
-                ):
+                if any(word in question_lower for word in ["distribution", "count", "frequency", "how many"]):
                     boost_factor = 1.3
 
             boosted_similarities[idx] *= boost_factor

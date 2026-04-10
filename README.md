@@ -2,6 +2,22 @@
 
 A Retrieval-Augmented Generation (RAG) system designed specifically for **small LLMs** (1B-8B parameters) to answer questions about CSV data. 
 
+## Quick Start with Docker
+
+Run the app without installing Python, Poetry, or Ollama:
+
+```bash
+git clone https://github.com/your-username/rag-on-csv.git
+cd rag-on-csv
+docker compose up
+```
+
+Open [http://localhost:8501](http://localhost:8501) in your browser. On first launch, the model download takes a few minutes — the UI shows the progress. After that, startup is instant.
+
+To stop: `docker compose down`
+
+To change the model: `OLLAMA_MODEL=llama3.1:8b docker compose up`
+
 ## Features
 
 - **Web Interface**: Streamlit-based UI with drag & drop file upload, real-time configuration, and interactive chat
@@ -17,80 +33,6 @@ A Retrieval-Augmented Generation (RAG) system designed specifically for **small 
 - **Smart Suggestions**: AI-generated suggested questions tailored to your data
 - **Interactive Mode**: Fuzzy matching suggestions for typos and similar values
 
-
-## Prerequisites
-
-- Python 3.8+ (Python 3.11 recommended)
-- [Poetry](https://python-poetry.org/docs/#installation) for dependency management
-- [Ollama](https://ollama.ai/) running locally with the llama3.2:1b model (or another compatible model)
-
-## Installation
-
-1. Clone this repository:
-2. Set up Python environment with pyenv (if using):
-   ```bash
-   pyenv local 3.11.7
-   ```
-
-3. Configure Poetry to use the correct Python version:
-   ```bash
-   poetry env use python3.11
-   ```
-
-4. Install dependencies using Poetry:
-   ```bash
-   poetry install
-   ```
-
-5. Make sure Ollama is running:
-   ```bash
-   # Either run the desktop app or use the command line
-   ollama serve
-   ```
-
-6. Pull the required model:
-   ```bash
-   ollama pull llama3.2:1b
-   ```
-
-## Quick Start
-
-### Web Interface (Recommended)
-
-1. **Install dependencies:**
-   ```bash
-   poetry install
-   ```
-
-2. **Make sure Ollama is running:**
-   ```bash
-   # Start Ollama service
-   ollama serve
-   
-   # In another terminal, pull a model
-   ollama pull llama3.2:1b
-   ```
-
-3. **Launch the web interface:**
-   ```bash
-   poetry run streamlit run streamlit_app.py
-   ```
-
-4. **Open your browser:**
-   - Streamlit will automatically open your default browser
-   - Or manually go to: **http://localhost:8501**
-
-5. **Start using the app:**
-   - Upload a CSV file or select sample data from the sidebar
-   - Configure your preferred settings (model, features)
-   - Ask questions about your data!
-
-### Terminal Interface
-
-```bash
-poetry install
-poetry run python main.py
-```
 
 ## Multi-Engine Architecture
 
@@ -287,6 +229,30 @@ Match 1:
 ### Sample Data
 
 The project includes sample CSV files to test with. The enhanced system automatically adapts to any CSV structure and provides AI-generated suggestions based on your specific data.
+
+## Development
+
+Run lint, format, and tests via Docker (no local Python setup needed):
+
+```bash
+# Lint (auto-fix)
+docker compose run --rm lint
+
+# Format
+docker compose run --rm format
+
+# Test
+docker compose run --rm test
+```
+
+For local development without Docker:
+
+```bash
+poetry install
+poetry run ruff check --fix .
+poetry run ruff format .
+poetry run pytest
+```
 
 ## Troubleshooting
 
