@@ -1,16 +1,16 @@
 """
-Fuzzy Matching module for finding similar values in CSV data
+Fuzzy Matching module for finding similar values in CSV data.
 """
 import difflib
+import logging
+
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
+
 class FuzzyMatcher:
-    """
-    Provides fuzzy matching capabilities to find similar values in CSV data
-    """
-    def __init__(self, debug_mode=False):
-        """Initialize the fuzzy matcher"""
-        self.debug_mode = debug_mode
+    """Provides fuzzy matching capabilities to find similar values in CSV data."""
         
     def calculate_similarity(self, str1, str2):
         """
@@ -100,7 +100,7 @@ class FuzzyMatcher:
                 if len(results) >= 3:
                     break
         
-        if self.debug_mode and results:
-            print(f"Found similar values for '{search_term}': {results}")
-            
+        if results:
+            logger.debug("Found similar values for '%s': %s", search_term, results)
+
         return list(results)

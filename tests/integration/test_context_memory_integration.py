@@ -29,7 +29,7 @@ class TestContextMemoryIntegration:
         # Create QA instance with context memory enabled and debug mode for testing
         self.qa = CSVQuestionAnswerer(
             model_name="llama3.2:1b",
-            debug_mode=True,
+
             enable_context_memory=True
         )
 
@@ -233,7 +233,7 @@ class TestContextMemoryIntegration:
             # Create new instance and load history
             new_qa = CSVQuestionAnswerer(
                 model_name="llama3.2:1b",
-                debug_mode=True,
+    
                 enable_context_memory=True
             )
             new_qa.load_csv(self.sound_measurements_csv)
@@ -252,7 +252,7 @@ class TestContextMemoryIntegration:
         # Create QA instance with context memory disabled
         qa_no_context = CSVQuestionAnswerer(
             model_name="llama3.2:1b",
-            debug_mode=True,
+
             enable_context_memory=False
         )
         qa_no_context.load_csv(self.sound_measurements_csv)
@@ -373,7 +373,7 @@ class TestContextMemoryEdgeCases:
 
         self.qa = CSVQuestionAnswerer(
             model_name="llama3.2:1b",
-            debug_mode=True,
+
             enable_context_memory=True
         )
 

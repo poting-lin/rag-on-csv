@@ -1,372 +1,366 @@
 """
-Structured Query Engine - handles direct DataFrame operations for precise queries
+Structured Query Engine - handles direct DataFrame operations for precise queries.
 """
+import logging
 import re
+from typing import Optional
+
 import pandas as pd
-from typing import Dict, Any, Optional
+
+from .exceptions import QueryResult
+
+logger = logging.getLogger(__name__)
 
 
 class StructuredQueryEngine:
-    """Handles structured queries that can be executed directly on DataFrames"""
+    """Handles structured queries that can be executed directly on DataFrames."""
 
-    def __init__(self, debug_mode=False):
-        self.debug_mode = debug_mode
-
-    def execute_query(self, question: str, df: pd.DataFrame) -> Dict[str, Any]:
-        """
-        Execute a structured query on the DataFrame
+    def execute_query(self, question: str, df: pd.DataFrame) -> QueryResult:
+        """Execute a structured query on the DataFrame.
 
         Args:
-            question: The user's question
-            df: The pandas DataFrame to query
+            question: The user's question.
+            df: The pandas DataFrame to query.
 
         Returns:
-            Dict with 'success', 'result', and optionally 'error'
+            QueryResult with the query outcome.
         """
         try:
             question_lower = question.lower()
             columns = df.columns.tolist()
 
-            if self.debug_mode:
-                print(f"Executing structured query: {question}")
+            logger.debug("Executing structured query: %s", question)
 
             # Try different query patterns in order of specificity
 
-            # 1. Aggregation queries (max, min, avg, sum, count)
-            agg_result = self._handle_aggregation_query(
-                question_lower, df, columns)
-            if agg_result['success']:
+            # 1. Aggregation queries
+            agg_result = self._handle_aggregation_query(question_lower, df, columns)
+            if agg_result.success:
                 return agg_result
 
-            # 2. Filtering queries (where conditions)
-            filter_result = self._handle_filter_query(
-                question_lower, df, columns)
-            if filter_result['success']:
+            # 2. Filtering queries
+            filter_result = self._handle_filter_query(question_lower, df, columns)
+            if filter_result.success:
                 return filter_result
 
             # 3. Column display queries
-            column_result = self._handle_column_query(
-                question_lower, df, columns)
-            if column_result['success']:
+            column_result = self._handle_column_query(question_lower, df, columns)
+            if column_result.success:
                 return column_result
 
-            # 4. Comparison queries (above, below, greater than, etc.)
-            comparison_result = self._handle_comparison_query(
-                question_lower, df, columns)
-            if comparison_result['success']:
+            # 4. Comparison queries
+            comparison_result = self._handle_comparison_query(question_lower, df, columns)
+            if comparison_result.success:
                 return comparison_result
 
-            # 5. Basic statistics queries
-            stats_result = self._handle_statistics_query(
-                question_lower, df, columns)
-            if stats_result['success']:
+            # 5. Statistics queries
+            stats_result = self._handle_statistics_query(question_lower, df, columns)
+            if stats_result.success:
                 return stats_result
 
-            # 6. Count and unique value queries
-            count_result = self._handle_count_query(
-                question_lower, df, columns)
-            if count_result['success']:
+            # 6. Count queries
+            count_result = self._handle_count_query(question_lower, df, columns)
+            if count_result.success:
                 return count_result
 
-            return {'success': False, 'error': 'No matching structured query pattern found'}
+            return QueryResult.fail(
+                error_code="NO_MATCH",
+                error_message="No matching structured query pattern found.",
+                engine="structured",
+            )
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error in structured query execution: {e}")
-            return {'success': False, 'error': str(e)}
+            logger.error("Error in structured query execution: %s", e, exc_info=True)
+            return QueryResult.fail(
+                error_code="NO_MATCH",
+                error_message=str(e),
+                engine="structured",
+            )
 
-    def _handle_aggregation_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle aggregation queries like 'max DecibelsA', 'average Location'"""
-
-        # Patterns for aggregation queries
+    def _handle_aggregation_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle aggregation queries like 'max DecibelsA', 'average Location'."""
         agg_patterns = [
-            (r'(?:what is|show|get)\s+(?:the\s+)?(max|maximum)\s+(\w+)', 'max'),
-            (r'(?:what is|show|get)\s+(?:the\s+)?(min|minimum)\s+(\w+)', 'min'),
-            (r'(?:what is|show|get)\s+(?:the\s+)?(avg|average|mean)\s+(\w+)', 'mean'),
-            (r'(?:what is|show|get)\s+(?:the\s+)?(sum|total)\s+(\w+)', 'sum'),
-            (r'(max|maximum)\s+(\w+)', 'max'),
-            (r'(min|minimum)\s+(\w+)', 'min'),
-            (r'(avg|average|mean)\s+(?:of\s+)?(\w+)', 'mean'),
-            (r'(sum|total)\s+(?:of\s+)?(\w+)', 'sum')
+            (r"(?:what is|show|get)\s+(?:the\s+)?(max|maximum)\s+(\w+)", "max"),
+            (r"(?:what is|show|get)\s+(?:the\s+)?(min|minimum)\s+(\w+)", "min"),
+            (r"(?:what is|show|get)\s+(?:the\s+)?(avg|average|mean)\s+(\w+)", "mean"),
+            (r"(?:what is|show|get)\s+(?:the\s+)?(sum|total)\s+(\w+)", "sum"),
+            (r"(max|maximum)\s+(\w+)", "max"),
+            (r"(min|minimum)\s+(\w+)", "min"),
+            (r"(avg|average|mean)\s+(?:of\s+)?(\w+)", "mean"),
+            (r"(sum|total)\s+(?:of\s+)?(\w+)", "sum"),
         ]
 
         for pattern, agg_func in agg_patterns:
             match = re.search(pattern, question)
-            if match:
-                # Extract column name (usually the last captured group)
-                column_name = match.groups()[-1]
+            if not match:
+                continue
 
-                # Find the actual column name (case insensitive)
-                actual_column = self._find_column_name(column_name, columns)
-                if not actual_column:
-                    continue
+            column_name = match.groups()[-1]
+            actual_column = self._find_column_name(column_name, columns)
+            if not actual_column:
+                continue
 
-                try:
-                    # Check if column is numeric
-                    if not pd.api.types.is_numeric_dtype(df[actual_column]):
-                        # For non-numeric columns, only certain operations make sense
-                        if agg_func in ['max', 'min']:
-                            result = getattr(df[actual_column], agg_func)()
-                            return {
-                                'success': True,
-                                'result': f"The {agg_func} {actual_column} is: {result}",
-                                'data': result
-                            }
-                        else:
-                            continue
-
-                    # Perform aggregation
-                    if agg_func == 'mean':
-                        result = df[actual_column].mean()
-                        return {
-                            'success': True,
-                            'result': f"The average {actual_column} is: {result:.2f}",
-                            'data': result
-                        }
-                    else:
+            try:
+                if not pd.api.types.is_numeric_dtype(df[actual_column]):
+                    if agg_func in ["max", "min"]:
                         result = getattr(df[actual_column], agg_func)()
-                        return {
-                            'success': True,
-                            'result': f"The {agg_func} {actual_column} is: {result}",
-                            'data': result
-                        }
-
-                except Exception as e:
-                    if self.debug_mode:
-                        print(
-                            f"Error in aggregation for column {actual_column}: {e}")
+                        return QueryResult.ok(
+                            data=f"The {agg_func} {actual_column} is: {result}",
+                            engine="structured",
+                            confidence=0.9,
+                            metadata={"data": result},
+                        )
                     continue
 
-        return {'success': False}
+                if agg_func == "mean":
+                    result = df[actual_column].mean()
+                    return QueryResult.ok(
+                        data=f"The average {actual_column} is: {result:.2f}",
+                        engine="structured",
+                        confidence=0.9,
+                        metadata={"data": result},
+                    )
 
-    def _handle_filter_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle filtering queries like 'show records where EventType is Festival'"""
+                result = getattr(df[actual_column], agg_func)()
+                return QueryResult.ok(
+                    data=f"The {agg_func} {actual_column} is: {result}",
+                    engine="structured",
+                    confidence=0.9,
+                    metadata={"data": result},
+                )
 
+            except Exception as e:
+                logger.debug("Error in aggregation for column %s: %s", actual_column, e)
+                continue
+
+        return QueryResult.fail("NO_MATCH", "No aggregation pattern matched.", engine="structured")
+
+    def _handle_filter_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle filtering queries like 'show records where EventType is Festival'."""
         filter_patterns = [
-            r'(?:show|list|find|get)\s+records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)',
-            r'records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)',
-            r'where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)'
+            r"(?:show|list|find|get)\s+records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)",
+            r"records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)",
+            r"where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)",
         ]
 
         for pattern in filter_patterns:
             match = re.search(pattern, question)
-            if match:
-                column_name, value = match.groups()
+            if not match:
+                continue
 
-                # Find the actual column name
-                actual_column = self._find_column_name(column_name, columns)
-                if not actual_column:
-                    continue
+            column_name, value = match.groups()
+            actual_column = self._find_column_name(column_name, columns)
+            if not actual_column:
+                continue
 
-                try:
-                    # Apply filter
-                    filtered_df = df[df[actual_column].astype(
-                        str).str.lower() == value.lower()]
+            try:
+                filtered_df = df[df[actual_column].astype(str).str.lower() == value.lower()]
 
-                    if filtered_df.empty:
-                        return {
-                            'success': True,
-                            'result': f"No records found where {actual_column} is {value}",
-                            'data': filtered_df
-                        }
+                if filtered_df.empty:
+                    return QueryResult.ok(
+                        data=f"No records found where {actual_column} is {value}",
+                        engine="structured",
+                        confidence=0.9,
+                        metadata={"data": filtered_df},
+                    )
 
-                    # Format result
-                    result_text = f"Found {len(filtered_df)} records where {actual_column} is {value}:\n\n"
-                    result_text += self._format_dataframe(filtered_df)
+                result_text = f"Found {len(filtered_df)} records where {actual_column} is {value}:\n\n"
+                result_text += self._format_dataframe(filtered_df)
 
-                    return {
-                        'success': True,
-                        'result': result_text,
-                        'data': filtered_df
-                    }
+                return QueryResult.ok(
+                    data=result_text,
+                    engine="structured",
+                    confidence=0.9,
+                    metadata={"data": filtered_df},
+                )
 
-                except Exception as e:
-                    if self.debug_mode:
-                        print(
-                            f"Error filtering by {actual_column} = {value}: {e}")
-                    continue
+            except Exception as e:
+                logger.debug("Error filtering by %s = %s: %s", actual_column, value, e)
+                continue
 
-        return {'success': False}
+        return QueryResult.fail("NO_MATCH", "No filter pattern matched.", engine="structured")
 
-    def _handle_column_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle column display queries like 'show Location column'"""
-
+    def _handle_column_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle column display queries like 'show Location column'."""
         column_patterns = [
-            r'(?:show|display|get)\s+(\w+)\s+(?:column|values?)',
-            r'(?:unique|distinct)\s+(\w+)',
-            r'(\w+)\s+(?:column|values?)'
+            r"(?:show|display|get)\s+(\w+)\s+(?:column|values?)",
+            r"(?:unique|distinct)\s+(\w+)",
+            r"(\w+)\s+(?:column|values?)",
         ]
 
         for pattern in column_patterns:
             match = re.search(pattern, question)
-            if match:
-                column_name = match.group(1)
+            if not match:
+                continue
 
-                # Find the actual column name
-                actual_column = self._find_column_name(column_name, columns)
-                if not actual_column:
-                    continue
+            column_name = match.group(1)
+            actual_column = self._find_column_name(column_name, columns)
+            if not actual_column:
+                continue
 
-                try:
-                    if 'unique' in question or 'distinct' in question:
-                        # Show unique values
-                        unique_values = df[actual_column].unique()
-                        result_text = f"Unique values in {actual_column}:\n"
-                        result_text += "\n".join(
-                            [f"- {val}" for val in unique_values[:20]])
-                        if len(unique_values) > 20:
-                            result_text += f"\n... and {len(unique_values) - 20} more values"
+            try:
+                if "unique" in question or "distinct" in question:
+                    unique_values = df[actual_column].unique()
+                    result_text = f"Unique values in {actual_column}:\n"
+                    result_text += "\n".join([f"- {val}" for val in unique_values[:20]])
+                    if len(unique_values) > 20:
+                        result_text += f"\n... and {len(unique_values) - 20} more values"
 
-                        return {
-                            'success': True,
-                            'result': result_text,
-                            'data': unique_values
-                        }
-                    else:
-                        # Show all values in the column
-                        values = df[actual_column].tolist()
-                        result_text = f"Values in {actual_column} column:\n"
-                        result_text += "\n".join(
-                            [f"- {val}" for val in values[:20]])
-                        if len(values) > 20:
-                            result_text += f"\n... and {len(values) - 20} more values"
+                    return QueryResult.ok(
+                        data=result_text,
+                        engine="structured",
+                        confidence=0.9,
+                        metadata={"data": unique_values},
+                    )
 
-                        return {
-                            'success': True,
-                            'result': result_text,
-                            'data': values
-                        }
+                values = df[actual_column].tolist()
+                result_text = f"Values in {actual_column} column:\n"
+                result_text += "\n".join([f"- {val}" for val in values[:20]])
+                if len(values) > 20:
+                    result_text += f"\n... and {len(values) - 20} more values"
 
-                except Exception as e:
-                    if self.debug_mode:
-                        print(f"Error displaying column {actual_column}: {e}")
-                    continue
+                return QueryResult.ok(
+                    data=result_text,
+                    engine="structured",
+                    confidence=0.9,
+                    metadata={"data": values},
+                )
 
-        return {'success': False}
+            except Exception as e:
+                logger.debug("Error displaying column %s: %s", actual_column, e)
+                continue
 
-    def _handle_comparison_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle comparison queries like 'DecibelsA above 80'"""
+        return QueryResult.fail("NO_MATCH", "No column pattern matched.", engine="structured")
 
+    def _handle_comparison_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle comparison queries like 'DecibelsA above 80'."""
         comparison_patterns = [
-            (r'(\w+)\s+(?:above|over|greater\s+than|>|>=)\s+(\d+(?:\.\d+)?)', '>'),
-            (r'(\w+)\s+(?:below|under|less\s+than|<|<=)\s+(\d+(?:\.\d+)?)', '<'),
-            (r'(\w+)\s+(?:equals?|=|==)\s+(\d+(?:\.\d+)?)', '=')
+            (r"(\w+)\s+(?:above|over|greater\s+than|>|>=)\s+(\d+(?:\.\d+)?)", ">"),
+            (r"(\w+)\s+(?:below|under|less\s+than|<|<=)\s+(\d+(?:\.\d+)?)", "<"),
+            (r"(\w+)\s+(?:equals?|=|==)\s+(\d+(?:\.\d+)?)", "="),
         ]
 
         for pattern, operator in comparison_patterns:
             match = re.search(pattern, question)
-            if match:
-                column_name, value_str = match.groups()
+            if not match:
+                continue
 
-                # Find the actual column name
-                actual_column = self._find_column_name(column_name, columns)
-                if not actual_column:
+            column_name, value_str = match.groups()
+            actual_column = self._find_column_name(column_name, columns)
+            if not actual_column:
+                continue
+
+            try:
+                value = float(value_str)
+
+                if not pd.api.types.is_numeric_dtype(df[actual_column]):
                     continue
 
-                try:
-                    value = float(value_str)
+                if operator == ">":
+                    filtered_df = df[df[actual_column] > value]
+                    op_text = f"greater than {value}"
+                elif operator == "<":
+                    filtered_df = df[df[actual_column] < value]
+                    op_text = f"less than {value}"
+                else:
+                    filtered_df = df[df[actual_column] == value]
+                    op_text = f"equal to {value}"
 
-                    # Check if column is numeric
-                    if not pd.api.types.is_numeric_dtype(df[actual_column]):
-                        continue
+                if filtered_df.empty:
+                    return QueryResult.ok(
+                        data=f"No records found where {actual_column} is {op_text}",
+                        engine="structured",
+                        confidence=0.9,
+                        metadata={"data": filtered_df},
+                    )
 
-                    # Apply comparison
-                    if operator == '>':
-                        filtered_df = df[df[actual_column] > value]
-                        op_text = f"greater than {value}"
-                    elif operator == '<':
-                        filtered_df = df[df[actual_column] < value]
-                        op_text = f"less than {value}"
-                    else:  # operator == '='
-                        filtered_df = df[df[actual_column] == value]
-                        op_text = f"equal to {value}"
+                result_text = f"Found {len(filtered_df)} records where {actual_column} is {op_text}:\n\n"
+                result_text += self._format_dataframe(filtered_df)
 
-                    if filtered_df.empty:
-                        return {
-                            'success': True,
-                            'result': f"No records found where {actual_column} is {op_text}",
-                            'data': filtered_df
-                        }
+                return QueryResult.ok(
+                    data=result_text,
+                    engine="structured",
+                    confidence=0.9,
+                    metadata={"data": filtered_df},
+                )
 
-                    result_text = f"Found {len(filtered_df)} records where {actual_column} is {op_text}:\n\n"
-                    result_text += self._format_dataframe(filtered_df)
+            except Exception as e:
+                logger.debug("Error in comparison query for %s: %s", actual_column, e)
+                continue
 
-                    return {
-                        'success': True,
-                        'result': result_text,
-                        'data': filtered_df
-                    }
+        return QueryResult.fail("NO_MATCH", "No comparison pattern matched.", engine="structured")
 
-                except Exception as e:
-                    if self.debug_mode:
-                        print(
-                            f"Error in comparison query for {actual_column}: {e}")
-                    continue
+    def _handle_statistics_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle basic statistics queries."""
+        if not any(word in question for word in ["statistics", "stats", "describe"]):
+            return QueryResult.fail("NO_MATCH", "Not a statistics query.", engine="structured")
 
-        return {'success': False}
+        numeric_columns = df.select_dtypes(include=["number"]).columns.tolist()
 
-    def _handle_statistics_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle basic statistics queries"""
+        if not numeric_columns:
+            return QueryResult.ok(
+                data="No numeric columns found for statistical analysis",
+                engine="structured",
+                confidence=0.9,
+            )
 
-        if any(word in question for word in ['statistics', 'stats', 'describe']):
-            numeric_columns = df.select_dtypes(
-                include=['number']).columns.tolist()
+        stats_text = "Basic Statistics:\n\n"
+        for col in numeric_columns[:5]:
+            stats = df[col].describe()
+            stats_text += f"{col}:\n"
+            stats_text += f"  Count: {stats['count']:.0f}\n"
+            stats_text += f"  Mean: {stats['mean']:.2f}\n"
+            stats_text += f"  Std: {stats['std']:.2f}\n"
+            stats_text += f"  Min: {stats['min']:.2f}\n"
+            stats_text += f"  Max: {stats['max']:.2f}\n\n"
 
-            if not numeric_columns:
-                return {
-                    'success': True,
-                    'result': "No numeric columns found for statistical analysis",
-                    'data': None
-                }
+        return QueryResult.ok(
+            data=stats_text,
+            engine="structured",
+            confidence=0.9,
+            metadata={"data": df[numeric_columns].describe()},
+        )
 
-            stats_text = "📊 Basic Statistics:\n\n"
-            for col in numeric_columns[:5]:  # Limit to first 5 numeric columns
-                stats = df[col].describe()
-                stats_text += f"{col}:\n"
-                stats_text += f"  Count: {stats['count']:.0f}\n"
-                stats_text += f"  Mean: {stats['mean']:.2f}\n"
-                stats_text += f"  Std: {stats['std']:.2f}\n"
-                stats_text += f"  Min: {stats['min']:.2f}\n"
-                stats_text += f"  Max: {stats['max']:.2f}\n\n"
-
-            return {
-                'success': True,
-                'result': stats_text,
-                'data': df[numeric_columns].describe()
-            }
-
-        return {'success': False}
-
-    def _handle_count_query(self, question: str, df: pd.DataFrame, columns: list) -> Dict[str, Any]:
-        """Handle count queries like 'how many records', 'count records'"""
-
+    def _handle_count_query(
+        self, question: str, df: pd.DataFrame, columns: list[str]
+    ) -> QueryResult:
+        """Handle count queries like 'how many records', 'count records'."""
         count_patterns = [
-            r'(?:how many|count)\s+records',
-            r'number of records',
-            r'total records'
+            r"(?:how many|count)\s+records",
+            r"number of records",
+            r"total records",
         ]
 
         for pattern in count_patterns:
             if re.search(pattern, question):
                 count = len(df)
-                return {
-                    'success': True,
-                    'result': f"Total number of records: {count}",
-                    'data': count
-                }
+                return QueryResult.ok(
+                    data=f"Total number of records: {count}",
+                    engine="structured",
+                    confidence=0.95,
+                    metadata={"data": count},
+                )
 
-        return {'success': False}
+        return QueryResult.fail("NO_MATCH", "Not a count query.", engine="structured")
 
-    def _find_column_name(self, search_name: str, columns: list) -> Optional[str]:
-        """Find the actual column name from a search string (case insensitive)"""
+    def _find_column_name(self, search_name: str, columns: list[str]) -> Optional[str]:
+        """Find the actual column name from a search string (case insensitive)."""
         search_lower = search_name.lower()
 
-        # Exact match first
         for col in columns:
             if col.lower() == search_lower:
                 return col
 
-        # Partial match
         for col in columns:
             if search_lower in col.lower() or col.lower() in search_lower:
                 return col
@@ -374,21 +368,17 @@ class StructuredQueryEngine:
         return None
 
     def _format_dataframe(self, df: pd.DataFrame, max_rows: int = 10) -> str:
-        """Format DataFrame for display"""
+        """Format DataFrame for display."""
         if df.empty:
             return "No data to display"
 
-        # Create table header
         header = "| " + " | ".join(df.columns) + " |"
-        separator = "|" + "|".join(["-" * (len(col) + 2)
-                                   for col in df.columns]) + "|"
+        separator = "|" + "|".join(["-" * (len(col) + 2) for col in df.columns]) + "|"
 
         rows = [header, separator]
 
-        # Add data rows (limit to max_rows)
         for _, row in df.head(max_rows).iterrows():
-            formatted_row = "| " + \
-                " | ".join([str(val) for val in row.values]) + " |"
+            formatted_row = "| " + " | ".join([str(val) for val in row.values]) + " |"
             rows.append(formatted_row)
 
         if len(df) > max_rows:

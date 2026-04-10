@@ -1,8 +1,8 @@
 """
-CSV Question Answerer module - main class that orchestrates the question answering process
+CSV Question Answerer module - main class that orchestrates the question answering process.
 """
+import logging
 import re
-import traceback
 import json
 import pandas as pd
 from .data_handler import CSVDataHandler
@@ -15,17 +15,31 @@ from .question_router import QuestionRouter
 from .structured_query_engine import StructuredQueryEngine
 from .enhanced_vector_search import CSVAwareVectorSearch
 from .hybrid_engine import HybridCSVEngine
+from .exceptions import (
+    OllamaConnectionError,
+    OllamaTimeoutError,
+    OllamaResponseError,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class CSVQuestionAnswerer:
-    """
-    Main class that orchestrates the CSV question answering process
-    """
+    """Main class that orchestrates the CSV question answering process."""
 
-    def __init__(self, model_name="llama3.2:1b", debug_mode=False, enable_context_memory=True,
-                 use_enhanced_engines=True):
-        """Initialize the CSV Question Answerer"""
-        self.debug_mode = debug_mode
+    def __init__(
+        self,
+        model_name: str = "llama3.2:1b",
+        enable_context_memory: bool = True,
+        use_enhanced_engines: bool = True,
+    ) -> None:
+        """Initialize the CSV Question Answerer.
+
+        Args:
+            model_name: Name of the Ollama model to use.
+            enable_context_memory: Whether to enable conversation context memory.
+            use_enhanced_engines: Whether to use enhanced multi-engine approach.
+        """
         self.model_name = model_name
         self.enable_context_memory = enable_context_memory
         self.use_enhanced_engines = use_enhanced_engines
@@ -34,23 +48,19 @@ class CSVQuestionAnswerer:
         self._conversation_stored = False
 
         # Initialize components
-        self.data_handler = CSVDataHandler(debug_mode=debug_mode)
-        self.fuzzy_matcher = FuzzyMatcher(debug_mode=debug_mode)
+        self.data_handler = CSVDataHandler()
+        self.fuzzy_matcher = FuzzyMatcher()
 
         # Initialize enhanced engines if enabled
         if self.use_enhanced_engines:
-            self.question_router = QuestionRouter(debug_mode=debug_mode)
-            self.structured_engine = StructuredQueryEngine(
-                debug_mode=debug_mode)
-            self.enhanced_vector_search = CSVAwareVectorSearch(
-                debug_mode=debug_mode)
-            self.hybrid_engine = HybridCSVEngine(
-                debug_mode=debug_mode, model_name=model_name)
+            self.question_router = QuestionRouter()
+            self.structured_engine = StructuredQueryEngine()
+            self.enhanced_vector_search = CSVAwareVectorSearch()
+            self.hybrid_engine = HybridCSVEngine(model_name=model_name)
 
         # Keep original engines for fallback
-        self.vector_search = VectorSearchEngine(debug_mode=debug_mode)
-        self.ollama_client = OllamaAPIClient(
-            model_name=model_name, debug_mode=debug_mode)
+        self.vector_search = VectorSearchEngine()
+        self.ollama_client = OllamaAPIClient(model_name=model_name)
         self.question_parser = None  # Will be initialized after loading CSV
 
         # Register cache clearing callback with data handler
@@ -68,41 +78,44 @@ class CSVQuestionAnswerer:
             self.context_memory = ConversationContext(
                 max_turns=10,
                 max_age_minutes=30,
-                debug_mode=debug_mode
             )
         else:
             self.context_memory = None
 
-    def load_csv(self, csv_path):
-        """Load the CSV file and initialize components that depend on CSV data"""
+    def load_csv(self, csv_path: str) -> list[str]:
+        """Load the CSV file and initialize components that depend on CSV data.
+
+        Args:
+            csv_path: Path to the CSV file.
+
+        Returns:
+            List of column names in the CSV.
+        """
         self.data_handler.load_csv(csv_path)
         self.question_parser = QuestionParser(
             csv_columns=self.data_handler.get_columns(),
-            debug_mode=self.debug_mode
         )
 
-        if self.debug_mode:
-            cache_info = self.vector_search.get_cache_info()
-            print(f"Vector cache info after loading CSV: {cache_info}")
+        cache_info = self.vector_search.get_cache_info()
+        logger.debug("Vector cache info after loading CSV: %s", cache_info)
 
         return self.data_handler.get_columns()
 
     def format_matches(self, matches, target_column=None, id_column=None, id_value=None):
-        """
-        Format matching rows into a readable answer
+        """Format matching rows into a readable answer.
 
         Args:
-            matches: DataFrame of matching rows
-            target_column: The column the user is asking about
-            id_column: The column used to identify the row
-            id_value: The value used to identify the row
+            matches: DataFrame of matching rows.
+            target_column: The column the user is asking about.
+            id_column: The column used to identify the row.
+            id_value: The value used to identify the row.
 
         Returns:
-            str: Formatted answer with all matches
+            Formatted answer with all matches.
         """
         if matches.empty:
             if id_column and id_value:
-                return f"❌ I don't have information about {id_column} {id_value}."
+                return f"I don't have information about {id_column} {id_value}."
             return "No matches found."
 
         # Format the results
@@ -138,16 +151,16 @@ class CSVQuestionAnswerer:
 
             return "\n".join(result)
 
-    def answer_question(self, question, csv_path=None) -> str | tuple:
-        """Answer a question based on CSV data with context memory support
+    def answer_question(self, question: str, csv_path: str | None = None) -> str | tuple:
+        """Answer a question based on CSV data with context memory support.
 
         Args:
-            question: Question to answer
-            csv_path: Path to CSV file (optional, if already loaded)
+            question: Question to answer.
+            csv_path: Path to CSV file (optional, if already loaded).
 
         Returns:
-            str or tuple: Either a string answer or a tuple (answer, suggestions, is_suggestion)
-                for spell corrections and other suggestions
+            Either a string answer or a tuple (answer, suggestions, is_suggestion)
+            for spell corrections and other suggestions.
         """
         if not question:
             return "Please ask a question."
@@ -165,9 +178,10 @@ class CSVQuestionAnswerer:
                 question)
 
             if context_info['is_follow_up']:
-                if self.debug_mode:
-                    print(
-                        f"Detected follow-up question: {context_info['reference_type']}")
+                logger.debug(
+                    "Detected follow-up question: %s",
+                    context_info['reference_type'],
+                )
 
                 # Enhance the question with context
                 if context_info['reference_type'] == 'pronoun':
@@ -191,8 +205,9 @@ class CSVQuestionAnswerer:
 
         return answer
 
-    def _get_answer_internal(self, question, csv_path=None, context_info=None) -> str | tuple:
-        """Internal method to get answer with enhanced multi-engine approach"""
+    def _get_answer_internal(self, question: str, csv_path: str | None = None,
+                             context_info=None) -> str | tuple:
+        """Internal method to get answer with enhanced multi-engine approach."""
 
         # Use enhanced engines if available
         if self.use_enhanced_engines and self.data_handler.get_dataframe() is not None:
@@ -204,8 +219,8 @@ class CSVQuestionAnswerer:
         # Fall back to original implementation
         return self._get_answer_original(question, csv_path, context_info)
 
-    def _get_answer_with_enhanced_engines(self, question, context_info=None):
-        """Get answer using the enhanced multi-engine approach"""
+    def _get_answer_with_enhanced_engines(self, question: str, context_info=None):
+        """Get answer using the enhanced multi-engine approach."""
         try:
             df = self.data_handler.get_dataframe()
             if df is None:
@@ -221,39 +236,37 @@ class CSVQuestionAnswerer:
                         context_filter)
                     if filtered_result is not None:
                         filtered_df = filtered_result
-                        if self.debug_mode:
-                            print(
-                                f"Applied context filter: {len(filtered_df)} records")
+                        logger.debug(
+                            "Applied context filter: %d records", len(filtered_df))
 
             # Route the question to the appropriate engine
             columns = self.data_handler.get_columns()
             engine_type = self.question_router.route_question(
                 question, columns)
 
-            if self.debug_mode:
-                print(f"Question routed to: {engine_type}")
+            logger.debug("Question routed to: %s", engine_type)
 
             # Handle different engine types
             if engine_type == 'structured':
                 result = self.structured_engine.execute_query(
                     question, filtered_df)
-                if result['success']:
+                if result.success:
                     # Store result data for context memory
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
                         result_count = self._count_results_in_answer(
-                            result['result'])
+                            result.data)
                         extracted_result_data = None
                         if result_count > 0:
                             extracted_result_data = self._extract_filter_info_from_question(
                                 question, result_count)
 
                         self._store_conversation_turn(
-                            question, result['result'], context_info,
+                            question, result.data, context_info,
                             result_data=extracted_result_data
                         )
                         self._conversation_stored = True
-                    return result['result']
+                    return result.data
 
             elif engine_type == 'semantic':
                 # Use enhanced vector search
@@ -264,7 +277,12 @@ class CSVQuestionAnswerer:
                     question)
 
                 if context:
-                    response = self.ollama_client.ask(context, question)
+                    try:
+                        response = self.ollama_client.ask(context, question)
+                    except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+                        logger.error("Ollama error during semantic search: %s", e, exc_info=True)
+                        return None
+
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
                         result_count = self._count_results_in_answer(response)
@@ -283,38 +301,36 @@ class CSVQuestionAnswerer:
             elif engine_type == 'hybrid':
                 result = self.hybrid_engine.answer_question(
                     question, filtered_df)
-                if result['success']:
+                if result.success:
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
                         result_count = self._count_results_in_answer(
-                            result['answer'])
+                            result.data)
                         extracted_result_data = None
                         if result_count > 0:
                             extracted_result_data = self._extract_filter_info_from_question(
                                 question, result_count)
 
                         self._store_conversation_turn(
-                            question, result['answer'], context_info,
+                            question, result.data, context_info,
                             result_data=extracted_result_data
                         )
                         self._conversation_stored = True
-                    return result['answer']
+                    return result.data
 
             # If enhanced engines fail, return None to fall back to original
             return None
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Enhanced engine error: {e}")
+            logger.error("Enhanced engine error: %s", e, exc_info=True)
             return None
 
-    def _get_answer_original(self, question, csv_path=None, context_info=None) -> str | tuple:
-        """Original implementation as fallback"""
+    def _get_answer_original(self, question: str, csv_path: str | None = None,
+                             context_info=None) -> str | tuple:
+        """Original implementation as fallback."""
         # Check if this is a complex query that needs to be broken down into steps
-        # Examples: "analysis all records are festival", "analyze records where EventType is Event"
         if self._is_complex_query(question):
-            if self.debug_mode:
-                print(f"Detected complex query: {question}")
+            logger.debug("Detected complex query: %s", question)
             return self._execute_query_steps(question, csv_path)
 
         try:
@@ -328,19 +344,21 @@ class CSVQuestionAnswerer:
             if self.enable_context_memory and self.context_memory:
                 context_filter = self.context_memory.get_context_data_filter(
                     question)
-                if self.debug_mode:
-                    print(f"Context filter result: {context_filter}")
+                logger.debug("Context filter result: %s", context_filter)
 
                 # Apply the context filter to get the subset of data
                 if context_filter and 'filter_column' in context_filter:
                     filtered_dataframe = self._apply_context_filter(
                         context_filter)
-                    if self.debug_mode:
-                        print(
-                            f"Filtered dataframe result: {filtered_dataframe is not None}")
-                        if filtered_dataframe is not None:
-                            print(
-                                f"Context filter applied: {len(filtered_dataframe)} records from filter")
+                    logger.debug(
+                        "Filtered dataframe result: %s",
+                        filtered_dataframe is not None,
+                    )
+                    if filtered_dataframe is not None:
+                        logger.debug(
+                            "Context filter applied: %d records from filter",
+                            len(filtered_dataframe),
+                        )
 
             # Create chunks for vector search (use filtered data if available)
             if filtered_dataframe is not None:
@@ -357,16 +375,20 @@ class CSVQuestionAnswerer:
                 question)
 
             # Check if this is an aggregation question on filtered data
-            if self.debug_mode:
-                print(
-                    f"Checking aggregation: filtered_dataframe is None: {filtered_dataframe is None}")
-                print(
-                    f"Is aggregation question: {self._is_aggregation_question(question)}")
+            logger.debug(
+                "Checking aggregation: filtered_dataframe is None: %s",
+                filtered_dataframe is None,
+            )
+            logger.debug(
+                "Is aggregation question: %s",
+                self._is_aggregation_question(question),
+            )
 
             if filtered_dataframe is not None and self._is_aggregation_question(question):
-                if self.debug_mode:
-                    print(
-                        f"Processing aggregation question on filtered data: {len(filtered_dataframe)} records")
+                logger.debug(
+                    "Processing aggregation question on filtered data: %d records",
+                    len(filtered_dataframe),
+                )
                 result = self._handle_aggregation_on_filtered_data(
                     question, filtered_dataframe)
                 if result:
@@ -405,9 +427,10 @@ class CSVQuestionAnswerer:
                 operation = command_info.get('operation')
                 columns = command_info.get('columns', [])
 
-                if self.debug_mode:
-                    print(
-                        f"Processing command: {command}, operation: {operation}, columns: {columns}")
+                logger.debug(
+                    "Processing command: %s, operation: %s, columns: %s",
+                    command, operation, columns,
+                )
 
                 # Handle help queries
                 if command == 'help' and operation == 'suggest_questions':
@@ -455,9 +478,8 @@ class CSVQuestionAnswerer:
                             # This is critical for 'where' queries to return all columns
                             query_plan['columns'] = []
 
-                        if self.debug_mode:
-                            print(
-                                f"Added filter: {actual_column} = {filter_value}")
+                        logger.debug(
+                            "Added filter: %s = %s", actual_column, filter_value)
 
                 # Add columns if specified
                 if columns:
@@ -489,22 +511,18 @@ class CSVQuestionAnswerer:
                     elif query_plan['operation'] == 'list':
                         # List records, filtered if specified
                         if 'filters' in query_plan:
-                            # Debug the result_df
-                            if self.debug_mode:
-                                print(
-                                    f"Filtered result_df type: {type(result_df)}")
-                                shape_info = (result_df.shape if hasattr(result_df, 'shape')
-                                              else 'No shape')
-                                print(
-                                    f"Filtered result_df shape: {shape_info}")
-
-                                cols_info = (result_df.columns.tolist() if hasattr(result_df, 'columns')
-                                             else 'No columns')
-                                print(
-                                    f"Filtered result_df columns: {cols_info}")
+                            logger.debug(
+                                "Filtered result_df type: %s", type(result_df))
+                            if hasattr(result_df, 'shape'):
+                                logger.debug(
+                                    "Filtered result_df shape: %s", result_df.shape)
+                            if hasattr(result_df, 'columns'):
+                                logger.debug(
+                                    "Filtered result_df columns: %s",
+                                    result_df.columns.tolist(),
+                                )
 
                             # Always ensure we have all columns for filtered results
-                            # This is critical for queries like "list records where EventType is Event"
                             if hasattr(result_df, 'ndim'):
                                 if result_df.ndim == 1:  # Series case
                                     # Get the filtered indices
@@ -520,11 +538,12 @@ class CSVQuestionAnswerer:
                                     result_df = self.data_handler.get_dataframe(
                                     ).loc[filtered_indices]
 
-                                if self.debug_mode:
-                                    print(
-                                        f"Reconstructed full dataframe with shape: {result_df.shape}")
-                                    print(
-                                        f"Columns: {result_df.columns.tolist()}")
+                                logger.debug(
+                                    "Reconstructed full dataframe with shape: %s",
+                                    result_df.shape,
+                                )
+                                logger.debug(
+                                    "Columns: %s", result_df.columns.tolist())
 
                             return self.format_dataframe(result_df)
                         else:
@@ -558,8 +577,7 @@ class CSVQuestionAnswerer:
                 r'all\s+records\s+(?:are|with|containing|having|about)\s+(\w+)', question.lower())
             if keyword_match:
                 keyword = keyword_match.group(1).strip()
-                if self.debug_mode:
-                    print(f"Detected keyword search for: {keyword}")
+                logger.debug("Detected keyword search for: %s", keyword)
                 matches = self.data_handler.search_value_in_all_columns(
                     keyword)
                 if not matches.empty:
@@ -651,7 +669,11 @@ class CSVQuestionAnswerer:
             if target_column and id_column and id_value:
                 # We already tried direct lookup and failed, so use the context
                 if context:
-                    return self.ollama_client.ask(context, question)
+                    try:
+                        return self.ollama_client.ask(context, question)
+                    except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+                        logger.error("Ollama error during context lookup: %s", e, exc_info=True)
+                        return f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
 
             # For general questions about the data, only use the LLM if we have relevant context
             if not context.strip():
@@ -660,41 +682,37 @@ class CSVQuestionAnswerer:
             # Ask the LLM with the context we found
             try:
                 result = self.ollama_client.ask(context, question)
-            except Exception as e:
-                traceback.print_exc()
-                result = f"I'm not able to find a proper answer. Error: {str(e)}. Would you like to ask another way?"
+            except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+                logger.error("Ollama error during question answering: %s", e, exc_info=True)
+                result = f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
 
         except Exception as e:
-            traceback.print_exc()
+            logger.error("Error processing question: %s", e, exc_info=True)
             result = f"Error processing your question: {str(e)}. Please try again."
 
         finally:
             # Restore original dataframe if we temporarily replaced it
             if filtered_dataframe is not None and 'original_df' in locals():
                 self.data_handler._dataframe = original_df
-                if self.debug_mode:
-                    print("Restored original dataframe")
+                logger.debug("Restored original dataframe")
 
         return result
 
     def format_dataframe(self, df):
-        """
-        Format a dataframe for display
+        """Format a dataframe for display.
 
         Args:
-            df: DataFrame to format
+            df: DataFrame to format.
 
         Returns:
-            str: Formatted dataframe as string
+            Formatted dataframe as string.
         """
         if df.empty:
             return "No data available"
 
-        # Debug info
-        if self.debug_mode:
-            print(f"DataFrame shape: {df.shape}")
-            print(f"DataFrame columns: {df.columns.tolist()}")
-            print(f"DataFrame head:\n{df.head()}")
+        logger.debug("DataFrame shape: %s", df.shape)
+        logger.debug("DataFrame columns: %s", df.columns.tolist())
+        logger.debug("DataFrame head:\n%s", df.head())
 
         # Make sure we have a DataFrame with multiple columns, not a Series
         if hasattr(df, 'ndim') and df.ndim == 1:
@@ -738,14 +756,13 @@ class CSVQuestionAnswerer:
         return "\n".join([header, separator] + rows)
 
     def generate_suggested_questions(self, csv_path=None):
-        """
-        Generate a list of suggested questions based on the CSV content
+        """Generate a list of suggested questions based on the CSV content.
 
         Args:
-            csv_path: Path to CSV file (optional, if already loaded)
+            csv_path: Path to CSV file (optional, if already loaded).
 
         Returns:
-            str: Formatted list of suggested questions
+            Formatted list of suggested questions.
         """
         if csv_path:
             self.data_handler.load_csv(csv_path)
@@ -836,15 +853,14 @@ class CSVQuestionAnswerer:
 
         return "\n".join(questions)
 
-    def _is_analysis_request(self, question):
-        """
-        Check if the question is requesting data analysis
+    def _is_analysis_request(self, question: str) -> bool:
+        """Check if the question is requesting data analysis.
 
         Args:
-            question: The question to check
+            question: The question to check.
 
         Returns:
-            bool: True if this is an analysis request
+            True if this is an analysis request.
         """
         analysis_keywords = [
             "analysis", "analyze", "statistics", "statistical", "stats", "stat",
@@ -865,15 +881,14 @@ class CSVQuestionAnswerer:
 
         return False
 
-    def _is_complex_query(self, question):
-        """
-        Check if the question is a complex query that needs to be broken down
+    def _is_complex_query(self, question: str) -> bool:
+        """Check if the question is a complex query that needs to be broken down.
 
         Args:
-            question: The question to check
+            question: The question to check.
 
         Returns:
-            bool: True if this is a complex query
+            True if this is a complex query.
         """
         question_lower = question.lower()
 
@@ -904,16 +919,15 @@ class CSVQuestionAnswerer:
 
         return False
 
-    def _parse_query_steps(self, question, csv_path=None):
-        """
-        Use LLM to break down a complex query into steps
+    def _parse_query_steps(self, question: str, csv_path: str | None = None) -> dict:
+        """Use LLM to break down a complex query into steps.
 
         Args:
-            question: The question to parse
-            csv_path: Path to CSV file (optional, if already loaded)
+            question: The question to parse.
+            csv_path: Path to CSV file (optional, if already loaded).
 
         Returns:
-            dict: Query steps plan with operations to perform
+            Query steps plan with operations to perform.
         """
         if csv_path and not self.data_handler.is_loaded():
             self.load_csv(csv_path)
@@ -928,19 +942,19 @@ class CSVQuestionAnswerer:
 
         # Create a prompt for the LLM to break down the query
         prompt = f"""You are a CSV data query planner. Break down this complex query into steps.
-        
+
         CSV columns: {', '.join(columns)}
-        
+
         Sample data (first few rows):
         {sample_data}
-        
+
         User query: "{question}"
-        
+
         Break this query into sequential steps. For example, if the query is "analysis all records are festival",
         the steps would be:
         1. Filter records containing the keyword "festival"
         2. Perform statistical analysis on the filtered records
-        
+
         Return a JSON object with the following structure:
         {{
           "steps": [
@@ -959,18 +973,20 @@ class CSVQuestionAnswerer:
           ],
           "description": "Filter records containing 'festival' and then analyze them"
         }}
-        
+
         Only include fields that are relevant to each step. Format as valid JSON with no comments.
         """
 
-        if self.debug_mode:
-            print("Breaking down complex query with LLM...")
+        logger.debug("Breaking down complex query with LLM...")
 
         # Send the request to the Ollama API
-        response = self.ollama_client.ask(prompt, question)
+        try:
+            response = self.ollama_client.ask(prompt, question)
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+            logger.error("Ollama error while parsing query steps: %s", e, exc_info=True)
+            return self._create_default_query_plan(question)
 
-        if self.debug_mode:
-            print(f"LLM Response: {response}")
+        logger.debug("LLM Response: %s", response)
 
         # For specific common cases, provide hardcoded plans
         # This ensures the feature works even if the LLM response is problematic
@@ -1025,8 +1041,7 @@ class CSVQuestionAnswerer:
                 if json_match:
                     json_str = json_match.group(0)
                 else:
-                    if self.debug_mode:
-                        print("No JSON found in LLM response")
+                    logger.warning("No JSON found in LLM response")
                     # Fallback to a default query plan
                     return self._create_default_query_plan(question)
 
@@ -1041,34 +1056,29 @@ class CSVQuestionAnswerer:
 
             # Validate the query plan structure
             if "steps" not in query_plan or not isinstance(query_plan["steps"], list) or not query_plan["steps"]:
-                if self.debug_mode:
-                    print("Invalid query plan structure")
+                logger.warning("Invalid query plan structure")
                 return self._create_default_query_plan(question)
 
-            if self.debug_mode:
-                print(f"Query plan: {json.dumps(query_plan, indent=2)}")
+            logger.debug("Query plan: %s", json.dumps(query_plan, indent=2))
 
             return query_plan
 
         except json.JSONDecodeError as e:
-            if self.debug_mode:
-                print(f"Failed to parse JSON from LLM response: {e}")
+            logger.warning("Failed to parse JSON from LLM response: %s", e)
             return self._create_default_query_plan(question)
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error parsing query steps: {str(e)}")
+            logger.error("Error parsing query steps: %s", e, exc_info=True)
             return self._create_default_query_plan(question)
 
-    def _create_default_query_plan(self, question):
-        """
-        Create a default query plan when LLM parsing fails
+    def _create_default_query_plan(self, question: str) -> dict:
+        """Create a default query plan when LLM parsing fails.
 
         Args:
-            question: The original question
+            question: The original question.
 
         Returns:
-            dict: A default query plan based on the question
+            A default query plan based on the question.
         """
         question_lower = question.lower()
 
@@ -1154,16 +1164,15 @@ class CSVQuestionAnswerer:
             "description": f"Process query: {question}"
         }
 
-    def _execute_query_steps(self, question, csv_path=None):
-        """
-        Execute a complex query by breaking it down into steps and executing each step
+    def _execute_query_steps(self, question: str, csv_path: str | None = None) -> str:
+        """Execute a complex query by breaking it down into steps.
 
         Args:
-            question: The complex query to execute
-            csv_path: Path to CSV file (optional, if already loaded)
+            question: The complex query to execute.
+            csv_path: Path to CSV file (optional, if already loaded).
 
         Returns:
-            str: The result of executing the query steps
+            The result of executing the query steps.
         """
         # Load CSV if needed
         if csv_path and not self.data_handler.is_loaded():
@@ -1185,15 +1194,13 @@ class CSVQuestionAnswerer:
         result_df = self.data_handler.get_dataframe()
         step_results = []
 
-        if self.debug_mode:
-            print(f"Executing {len(query_plan['steps'])} steps")
+        logger.debug("Executing %d steps", len(query_plan['steps']))
 
         for i, step in enumerate(query_plan["steps"]):
             operation = step.get("operation")
             step_type = step.get("type")
 
-            if self.debug_mode:
-                print(f"Step {i+1}: {operation} - {step_type}")
+            logger.debug("Step %d: %s - %s", i + 1, operation, step_type)
 
             # Handle different operations
             if operation == "filter":
@@ -1290,16 +1297,15 @@ class CSVQuestionAnswerer:
         else:
             return "\n".join(step_results) if step_results else "No results found."
 
-    def _perform_analysis(self, csv_path, question):
-        """
-        Perform statistical analysis on the data
+    def _perform_analysis(self, csv_path: str | None, question: str) -> str:
+        """Perform statistical analysis on the data.
 
         Args:
-            csv_path: Path to the CSV file
-            question: The analysis question
+            csv_path: Path to the CSV file.
+            question: The analysis question.
 
         Returns:
-            str: Formatted analysis results
+            Formatted analysis results.
         """
         # Load CSV if needed
         if csv_path:
@@ -1335,7 +1341,7 @@ class CSVQuestionAnswerer:
                    f"{keyword} for {col.lower()}" in question_lower
                    for keyword in ["analysis", "analyze", "statistics", "stats"]):
                 target_columns = [col]
-            # Look for patterns like "analysis where Location is City Center" or "where EventType is Event"
+            # Look for patterns like "analysis where Location is City Center"
             elif f"where {col.lower()}" in question_lower or f"for {col.lower()}" in question_lower:
                 filter_column = col
 
@@ -1367,37 +1373,36 @@ class CSVQuestionAnswerer:
         # Format the results
         return self._format_analysis_results(analysis_results, question)
 
-    def _format_analysis_results(self, results, question):
-        """
-        Format analysis results into a readable string
+    def _format_analysis_results(self, results: dict, question: str) -> str:
+        """Format analysis results into a readable string.
 
         Args:
-            results: Analysis results dictionary
-            question: The original question
+            results: Analysis results dictionary.
+            question: The original question.
 
         Returns:
-            str: Formatted analysis results
+            Formatted analysis results.
         """
         if "error" in results:
             return f"Analysis Error: {results['error']}"
 
-        output = ["📊 Statistical Analysis Results"]
+        output = ["Statistical Analysis Results"]
         output.append(f"Total Records: {results['record_count']}")
 
         # Add numeric column statistics
         if results["columns"]:
-            output.append("\n📈 Numeric Column Statistics:")
+            output.append("\nNumeric Column Statistics:")
             for col, stats in results["columns"].items():
                 output.append(f"\n{col}:")
-                output.append(f"  • Min: {stats['min']:.2f}")
-                output.append(f"  • Max: {stats['max']:.2f}")
-                output.append(f"  • Mean: {stats['mean']:.2f}")
-                output.append(f"  • Median: {stats['median']:.2f}")
-                output.append(f"  • Standard Deviation: {stats['std']:.2f}")
+                output.append(f"  - Min: {stats['min']:.2f}")
+                output.append(f"  - Max: {stats['max']:.2f}")
+                output.append(f"  - Mean: {stats['mean']:.2f}")
+                output.append(f"  - Median: {stats['median']:.2f}")
+                output.append(f"  - Standard Deviation: {stats['std']:.2f}")
 
         # Add outlier information
         if results["outliers"]:
-            output.append("\n⚠️ Outliers Detected:")
+            output.append("\nOutliers Detected:")
             for col, outlier_info in results["outliers"].items():
                 output.append(
                     f"\n{col}: {outlier_info['count']} outliers detected")
@@ -1418,28 +1423,24 @@ class CSVQuestionAnswerer:
 
         # Add categorical distributions
         if results["categorical_counts"]:
-            output.append("\n📊 Categorical Distributions:")
+            output.append("\nCategorical Distributions:")
             for col, counts in results["categorical_counts"].items():
                 output.append(f"\n{col}:")
                 for val, count in counts.items():
                     percentage = (count / results["record_count"]) * 100
-                    output.append(f"  • {val}: {count} ({percentage:.1f}%)")
+                    output.append(f"  - {val}: {count} ({percentage:.1f}%)")
 
         return "\n".join(output)
 
-    def process_question_with_suggestions(self, csv_file, question):
-        """
-        Process a question with interactive suggestions for similar values
+    def process_question_with_suggestions(self, csv_file: str, question: str):
+        """Process a question with interactive suggestions for similar values.
 
         Args:
-            csv_file: Path to the CSV file
-            question: The question to answer
+            csv_file: Path to the CSV file.
+            question: The question to answer.
 
         Returns:
-            tuple: (answer, suggested_values, is_suggestion)
-                answer: The answer to the question
-                suggested_values: List of suggested values if any
-                is_suggestion: True if the answer contains suggestions
+            Tuple of (answer, suggested_values, is_suggestion).
         """
         result = self.answer_question(question, csv_file)
 
@@ -1470,8 +1471,8 @@ class CSVQuestionAnswerer:
         # If no suggestions, just return the original answer
         return answer, [], False
 
-    def _resolve_pronouns_with_context(self, question, referenced_turns):
-        """Resolve pronouns in the question using context from previous turns"""
+    def _resolve_pronouns_with_context(self, question: str, referenced_turns) -> str:
+        """Resolve pronouns in the question using context from previous turns."""
         if not referenced_turns:
             return question
 
@@ -1522,13 +1523,13 @@ class CSVQuestionAnswerer:
             resolved_question = re.sub(
                 r'\bthose\b', main_entity, resolved_question, flags=re.IGNORECASE)
 
-        if self.debug_mode:
-            print(f"Resolved '{question}' to '{resolved_question}'")
+        logger.debug("Resolved '%s' to '%s'", question, resolved_question)
 
         return resolved_question
 
-    def _store_conversation_turn(self, question, answer, context_info, result_data=None):
-        """Store the conversation turn in context memory"""
+    def _store_conversation_turn(self, question: str, answer: str, context_info,
+                                 result_data=None) -> None:
+        """Store the conversation turn in context memory."""
         if not self.context_memory:
             return
 
@@ -1551,17 +1552,19 @@ class CSVQuestionAnswerer:
         }
 
         # Create result_data if we have filtering information
-        if self.debug_mode:
-            print(
-                f"Checking filter extraction: result_data={result_data}, question_type={question_type}, result_count={result_count}")
+        logger.debug(
+            "Checking filter extraction: result_data=%s, question_type=%s, result_count=%d",
+            result_data, question_type, result_count,
+        )
 
         if result_data is None and question_type in ['filter', 'list'] and result_count > 0:
             # Try to extract filter information from the question
             result_data = self._extract_filter_info_from_question(
                 question, result_count)
-            if self.debug_mode:
-                print(
-                    f"Extracted result_data for question '{question}': {result_data}")
+            logger.debug(
+                "Extracted result_data for question '%s': %s",
+                question, result_data,
+            )
 
         self.context_memory.add_turn(
             question=question,
@@ -1574,8 +1577,8 @@ class CSVQuestionAnswerer:
             result_data=result_data
         )
 
-    def _classify_question_type(self, question):
-        """Classify the type of question for context memory"""
+    def _classify_question_type(self, question: str) -> str:
+        """Classify the type of question for context memory."""
         question_lower = question.lower()
 
         if any(word in question_lower for word in ['summarize', 'summary']):
@@ -1593,8 +1596,8 @@ class CSVQuestionAnswerer:
         else:
             return 'unknown'
 
-    def _extract_entities(self, question, answer):
-        """Extract entities (columns, values) mentioned in question and answer"""
+    def _extract_entities(self, question: str, answer: str) -> list[str]:
+        """Extract entities (columns, values) mentioned in question and answer."""
         entities = []
 
         # Add CSV columns mentioned in the question
@@ -1618,8 +1621,8 @@ class CSVQuestionAnswerer:
 
         return list(set(entities))  # Remove duplicates
 
-    def _count_results_in_answer(self, answer):
-        """Extract the number of results from the answer text"""
+    def _count_results_in_answer(self, answer: str) -> int:
+        """Extract the number of results from the answer text."""
         # Look for patterns like "Found 5 matches", "3 records", etc.
         count_patterns = [
             r'found (\d+) (?:matches|records|results)',
@@ -1642,8 +1645,8 @@ class CSVQuestionAnswerer:
 
         return 0
 
-    def _calculate_confidence_score(self, answer):
-        """Calculate confidence score for the answer"""
+    def _calculate_confidence_score(self, answer: str) -> float:
+        """Calculate confidence score for the answer."""
         # Simple heuristic based on answer characteristics
         if any(phrase in answer.lower() for phrase in ['error', 'could not', 'not found', 'no matches']):
             return 0.3
@@ -1654,8 +1657,8 @@ class CSVQuestionAnswerer:
         else:
             return 0.6
 
-    def _extract_filter_info_from_question(self, question, result_count):
-        """Extract filter information from the question to store for context"""
+    def _extract_filter_info_from_question(self, question: str, result_count: int) -> dict:
+        """Extract filter information from the question to store for context."""
         filter_info = {
             'filter_applied': True,
             'original_question': question,
@@ -1687,13 +1690,12 @@ class CSVQuestionAnswerer:
             filter_info['filter_value'] = with_match.group(2).strip()
             filter_info['filter_operator'] = '='
 
-        if self.debug_mode:
-            print(f"Extracted filter info: {filter_info}")
+        logger.debug("Extracted filter info: %s", filter_info)
 
         return filter_info
 
-    def _apply_context_filter(self, context_filter):
-        """Apply context filter to get filtered dataframe"""
+    def _apply_context_filter(self, context_filter: dict):
+        """Apply context filter to get filtered dataframe."""
         try:
             if 'filter_column' in context_filter and 'filter_value' in context_filter:
                 filter_column = context_filter['filter_column']
@@ -1710,29 +1712,28 @@ class CSVQuestionAnswerer:
                         break
 
                 if actual_column is None:
-                    if self.debug_mode:
-                        print(f"Column {filter_column} not found in dataframe")
+                    logger.debug("Column %s not found in dataframe", filter_column)
                     return None
 
                 # Apply the filter
                 filtered_df = df[df[actual_column].astype(
                     str).str.lower() == filter_value.lower()]
 
-                if self.debug_mode:
-                    print(
-                        f"Filtered {len(df)} records to {len(filtered_df)} records using {actual_column} = {filter_value}")
+                logger.debug(
+                    "Filtered %d records to %d records using %s = %s",
+                    len(df), len(filtered_df), actual_column, filter_value,
+                )
 
                 return filtered_df
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error applying context filter: {e}")
+            logger.error("Error applying context filter: %s", e, exc_info=True)
             return None
 
         return None
 
-    def _is_aggregation_question(self, question):
-        """Check if the question is asking for aggregation (max, min, avg, etc.)"""
+    def _is_aggregation_question(self, question: str) -> bool:
+        """Check if the question is asking for aggregation (max, min, avg, etc.)."""
         question_lower = question.lower()
         aggregation_keywords = [
             'max', 'maximum', 'min', 'minimum', 'avg', 'average', 'mean',
@@ -1740,8 +1741,8 @@ class CSVQuestionAnswerer:
         ]
         return any(keyword in question_lower for keyword in aggregation_keywords)
 
-    def _handle_aggregation_on_filtered_data(self, question, filtered_df):
-        """Handle aggregation questions on filtered data"""
+    def _handle_aggregation_on_filtered_data(self, question: str, filtered_df):
+        """Handle aggregation questions on filtered data."""
         try:
             question_lower = question.lower()
 
@@ -1756,15 +1757,14 @@ class CSVQuestionAnswerer:
                     break
 
             if not target_column:
-                if self.debug_mode:
-                    print(
-                        f"Could not identify target column in question: "
-                        f"{question}")
-                    print(f"Available columns: {columns}")
+                logger.debug(
+                    "Could not identify target column in question: %s",
+                    question,
+                )
+                logger.debug("Available columns: %s", columns)
                 return None
 
-            if self.debug_mode:
-                print(f"Identified target column: {target_column}")
+            logger.debug("Identified target column: %s", target_column)
 
             # Check if the column exists in filtered data
             if target_column not in filtered_df.columns:
@@ -1775,12 +1775,10 @@ class CSVQuestionAnswerer:
                 numeric_col = pd.to_numeric(
                     filtered_df[target_column], errors='coerce')
 
-                if self.debug_mode:
-                    nan_count = numeric_col.isna().sum()
-                    total_count = len(numeric_col)
-                    print(
-                        f"Column {target_column} numeric conversion - "
-                        f"NaN count: {nan_count}/{total_count}")
+                logger.debug(
+                    "Column %s numeric conversion - NaN count: %d/%d",
+                    target_column, numeric_col.isna().sum(), len(numeric_col),
+                )
 
                 if numeric_col.isna().all():
                     # Not a numeric column, handle as text
@@ -1811,48 +1809,41 @@ class CSVQuestionAnswerer:
                         return f"There are {result} records in the filtered data."
 
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error in numeric conversion: {e}")
+                logger.error("Error in numeric conversion: %s", e, exc_info=True)
                 return None
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error in aggregation handling: {e}")
+            logger.error("Error in aggregation handling: %s", e, exc_info=True)
             return None
 
         return None
 
-    def get_conversation_summary(self):
-        """Get a summary of the current conversation"""
+    def get_conversation_summary(self) -> str:
+        """Get a summary of the current conversation."""
         if self.enable_context_memory and self.context_memory:
             return self.context_memory.get_conversation_summary()
         else:
             return "Context memory is not enabled."
 
-    def clear_conversation_history(self):
-        """Clear the conversation history"""
+    def clear_conversation_history(self) -> None:
+        """Clear the conversation history."""
         if self.enable_context_memory and self.context_memory:
             self.context_memory.clear_context()
-            if self.debug_mode:
-                print("Conversation history cleared.")
+            logger.info("Conversation history cleared.")
 
-    def save_conversation_history(self, filepath):
-        """Save conversation history to a file"""
+    def save_conversation_history(self, filepath: str) -> None:
+        """Save conversation history to a file."""
         if self.enable_context_memory and self.context_memory:
             self.context_memory.save_to_file(filepath)
-            if self.debug_mode:
-                print(f"Conversation history saved to {filepath}")
+            logger.info("Conversation history saved to %s", filepath)
 
-    def load_conversation_history(self, filepath):
-        """Load conversation history from a file"""
+    def load_conversation_history(self, filepath: str) -> None:
+        """Load conversation history from a file."""
         if self.enable_context_memory and self.context_memory:
             try:
                 self.context_memory.load_from_file(filepath)
-                if self.debug_mode:
-                    print(f"Conversation history loaded from {filepath}")
+                logger.info("Conversation history loaded from %s", filepath)
             except FileNotFoundError:
-                if self.debug_mode:
-                    print(f"Conversation history file {filepath} not found")
+                logger.warning("Conversation history file %s not found", filepath)
             except Exception as e:
-                if self.debug_mode:
-                    print(f"Error loading conversation history: {e}")
+                logger.error("Error loading conversation history: %s", e, exc_info=True)

@@ -1,19 +1,19 @@
 """
-Question Parser module for extracting information from user questions
+Question Parser module for extracting information from user questions.
 """
+import logging
 import re
 from difflib import get_close_matches
 
+logger = logging.getLogger(__name__)
+
 
 class QuestionParser:
-    """
-    Parses user questions to extract target column, ID column, and ID value
-    """
+    """Parses user questions to extract target column, ID column, and ID value."""
 
-    def __init__(self, csv_columns, debug_mode=False):
-        """Initialize the question parser with CSV column names"""
+    def __init__(self, csv_columns: list[str]) -> None:
+        """Initialize the question parser with CSV column names."""
         self.csv_columns = csv_columns
-        self.debug_mode = debug_mode
 
         # Define known commands for spell checking
         self.known_commands = [
@@ -67,8 +67,7 @@ class QuestionParser:
         # Check for help queries first
         for pattern in self.help_patterns:
             if re.search(pattern, question.lower()):
-                if self.debug_mode:
-                    print(f"Detected help query: {question}")
+                logger.debug("Detected help query: %s", question)
                 return {
                     'command': 'help',
                     'operation': 'suggest_questions',
@@ -108,15 +107,11 @@ class QuestionParser:
 
                 if close_matches:
                     closest_match = close_matches[0]
-                    if self.debug_mode:
-                        print(
-                            f"Detected possible typo: '{word}' -> '{closest_match}'")
+                    logger.debug("Detected possible typo: '%s' -> '%s'", word, closest_match)
 
                     # Check if the closest match is one of our command patterns
                     if closest_match in [p.strip() for p in command_patterns] or closest_match in ["summarize", "list", "count"]:
-                        if self.debug_mode:
-                            print(
-                                f"Detected command typo: '{word}' -> '{closest_match}'")
+                        logger.debug("Detected command typo: '%s' -> '%s'", word, closest_match)
                         command_info = {
                             'command': closest_match,
                             'original': word,
@@ -295,7 +290,6 @@ class QuestionParser:
             # Merge command_info dictionary into the result
             result.update(command_info)
 
-        if self.debug_mode:
-            print(f"Extracted from question: {result}")
+        logger.debug("Extracted from question: %s", result)
 
         return result

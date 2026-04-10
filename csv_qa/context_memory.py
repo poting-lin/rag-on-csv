@@ -1,77 +1,74 @@
 """
-Context Memory module for maintaining conversation history and context awareness
+Context Memory module for maintaining conversation history and context awareness.
 """
-import re
 import json
+import logging
+import re
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
 from dataclasses import dataclass, asdict
+
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ConversationTurn:
-    """Represents a single question-answer turn in the conversation"""
+    """Represents a single question-answer turn in the conversation."""
+
     question: str
     answer: str
     timestamp: datetime
-    question_type: str  # 'lookup', 'analysis', 'filter', 'summary', etc.
-    entities_mentioned: List[str]  # columns, values mentioned
-    result_count: int  # number of records returned
-    confidence_score: float  # how confident we are in the answer
-    metadata: Dict[str, Any]  # additional context
-    # Store actual query results for context
-    result_data: Optional[Dict[str, Any]] = None
+    question_type: str
+    entities_mentioned: list[str]
+    result_count: int
+    confidence_score: float
+    metadata: dict[str, Any]
+    result_data: Optional[dict[str, Any]] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization"""
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
         data = asdict(self)
-        data['timestamp'] = self.timestamp.isoformat()
-        # Don't serialize result_data to avoid large JSON files
-        if 'result_data' in data:
-            data.pop('result_data')
+        data["timestamp"] = self.timestamp.isoformat()
+        if "result_data" in data:
+            data.pop("result_data")
         return data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ConversationTurn':
-        """Create from dictionary"""
-        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
-        # result_data won't be restored from file (intentionally)
-        data['result_data'] = None
+    def from_dict(cls, data: dict[str, Any]) -> "ConversationTurn":
+        """Create from dictionary."""
+        data["timestamp"] = datetime.fromisoformat(data["timestamp"])
+        data["result_data"] = None
         return cls(**data)
 
 
 class ConversationContext:
-    """Manages conversation context and memory"""
+    """Manages conversation context and memory."""
 
-    def __init__(self, max_turns: int = 10, max_age_minutes: int = 30, debug_mode: bool = False):
-        """
-        Initialize conversation context
+    def __init__(self, max_turns: int = 10, max_age_minutes: int = 30) -> None:
+        """Initialize conversation context.
 
         Args:
-            max_turns: Maximum number of turns to keep in memory
-            max_age_minutes: Maximum age of turns to keep (in minutes)
-            debug_mode: Enable debug logging
+            max_turns: Maximum number of turns to keep in memory.
+            max_age_minutes: Maximum age of turns to keep (in minutes).
         """
         self.max_turns = max_turns
         self.max_age_minutes = max_age_minutes
-        self.debug_mode = debug_mode
 
-        self.conversation_history: List[ConversationTurn] = []
+        self.conversation_history: list[ConversationTurn] = []
         self.session_start = datetime.now()
-        # What the user is currently focused on
         self.current_focus: Optional[str] = None
-        self.mentioned_entities: Dict[str, int] = {}  # Entity -> mention count
+        self.mentioned_entities: dict[str, int] = {}
 
-        # For semantic similarity of questions
         self.vectorizer = None
         self.question_vectors = None
 
     def add_turn(self, question: str, answer: str, question_type: str = "unknown",
-                 entities_mentioned: List[str] = None, result_count: int = 0,
-                 confidence_score: float = 1.0, metadata: Dict[str, Any] = None,
-                 result_data: Optional[Dict[str, Any]] = None):
+                 entities_mentioned: list[str] | None = None, result_count: int = 0,
+                 confidence_score: float = 1.0, metadata: dict[str, Any] | None = None,
+                 result_data: dict[str, Any] | None = None):
         """Add a new conversation turn"""
 
         if entities_mentioned is None:
@@ -107,11 +104,13 @@ class ConversationContext:
         # Rebuild vectors for similarity search
         self._rebuild_question_vectors()
 
-        if self.debug_mode:
-            print(
-                f"Added turn: {question[:50]}... -> {len(self.conversation_history)} total turns")
+        logger.debug(
+            "Added turn: %s... -> %d total turns",
+            question[:50],
+            len(self.conversation_history),
+        )
 
-    def get_relevant_context(self, current_question: str, max_context_turns: int = 3) -> List[ConversationTurn]:
+    def get_relevant_context(self, current_question: str, max_context_turns: int = 3) -> list[ConversationTurn]:
         """
         Get the most relevant previous turns for the current question
 
@@ -167,7 +166,7 @@ class ConversationContext:
         # Return top results
         return [turn for _, turn in scored_turns[:max_context_turns]]
 
-    def get_context_summary(self, relevant_turns: List[ConversationTurn]) -> str:
+    def get_context_summary(self, relevant_turns: list[ConversationTurn]) -> str:
         """Generate a context summary from relevant turns"""
         if not relevant_turns:
             return ""
@@ -199,7 +198,7 @@ class ConversationContext:
 
         return "\n".join(context_parts)
 
-    def get_context_data_filter(self, current_question: str) -> Optional[Dict[str, Any]]:
+    def get_context_data_filter(self, current_question: str) -> Optional[dict[str, Any]]:
         """
         Get filtering context data for follow-up questions that reference previous results
 
@@ -219,15 +218,16 @@ class ConversationContext:
             if turn.result_data and turn.result_count > 0:
                 # Check if this turn had filtering that we should preserve
                 if 'filter_applied' in turn.result_data:
-                    if self.debug_mode:
-                        print(
-                            f"Found context data filter from previous turn: {turn.question[:50]}...")
+                    logger.debug(
+                    "Found context data filter from previous turn: %s...",
+                    turn.question[:50],
+                )
                     return turn.result_data
                 break
 
         return None
 
-    def detect_follow_up_intent(self, current_question: str) -> Dict[str, Any]:
+    def detect_follow_up_intent(self, current_question: str) -> dict[str, Any]:
         """
         Detect if the current question is a follow-up to previous questions
 
@@ -317,8 +317,7 @@ class ConversationContext:
         self.vectorizer = None
         self.question_vectors = None
 
-        if self.debug_mode:
-            print("Cleared conversation context")
+        logger.debug("Cleared conversation context")
 
     def save_to_file(self, filepath: str):
         """Save conversation history to a JSON file"""
@@ -374,7 +373,7 @@ class ConversationContext:
 
         return any(word in question_lower for word in focus_words if len(word) > 3)
 
-    def _find_similar_questions(self, current_question: str, max_results: int = 3) -> List[ConversationTurn]:
+    def _find_similar_questions(self, current_question: str, max_results: int = 3) -> list[ConversationTurn]:
         """Find questions similar to the current one using TF-IDF similarity"""
         if not self.conversation_history or self.question_vectors is None:
             return []
@@ -400,11 +399,10 @@ class ConversationContext:
             return [self.conversation_history[i] for i, _ in similar_indices[:max_results]]
 
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error finding similar questions: {e}")
+            logger.debug("Error finding similar questions: %s", e)
             return []
 
-    def _find_entity_related_turns(self, current_question: str, max_results: int = 3) -> List[ConversationTurn]:
+    def _find_entity_related_turns(self, current_question: str, max_results: int = 3) -> list[ConversationTurn]:
         """Find turns that mention entities from the current question"""
         # Extract potential entities from current question (simple approach)
         words = re.findall(
@@ -451,7 +449,7 @@ class ConversationContext:
 
         return score
 
-    def _update_current_focus(self, question: str, entities_mentioned: List[str]):
+    def _update_current_focus(self, question: str, entities_mentioned: list[str]):
         """Update the current conversation focus"""
         if entities_mentioned:
             # Focus on the most important entity
@@ -511,7 +509,6 @@ class ConversationContext:
                 stop_words='english', max_features=1000)
             self.question_vectors = self.vectorizer.fit_transform(questions)
         except Exception as e:
-            if self.debug_mode:
-                print(f"Error building question vectors: {e}")
+            logger.debug("Error building question vectors: %s", e)
             self.vectorizer = None
             self.question_vectors = None
