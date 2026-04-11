@@ -9,12 +9,11 @@ import pandas as pd
 from .data_handler import CSVDataHandler
 from .fuzzy_matcher import FuzzyMatcher
 from .question_parser import QuestionParser
-from .vector_search import VectorSearchEngine
+from .semantic_search import SemanticSearch
 from .ollama_client import OllamaAPIClient
 from .context_memory import ConversationContext
 from .question_router import QuestionRouter
 from .structured_query_engine import StructuredQueryEngine
-from .enhanced_vector_search import CSVAwareVectorSearch
 from .hybrid_engine import HybridCSVEngine
 from .exceptions import (
     OllamaConnectionError,
@@ -31,6 +30,7 @@ class CSVQuestionAnswerer:
     def __init__(
         self,
         model_name: str = "llama3.2:1b",
+        embed_model: str | None = None,
         enable_context_memory: bool = True,
         use_enhanced_engines: bool = True,
     ) -> None:
@@ -38,6 +38,7 @@ class CSVQuestionAnswerer:
 
         Args:
             model_name: Name of the Ollama model to use.
+            embed_model: Name of the embedding model for semantic search.
             enable_context_memory: Whether to enable conversation context memory.
             use_enhanced_engines: Whether to use enhanced multi-engine approach.
         """
@@ -56,19 +57,17 @@ class CSVQuestionAnswerer:
         if self.use_enhanced_engines:
             self.question_router = QuestionRouter()
             self.structured_engine = StructuredQueryEngine()
-            self.enhanced_vector_search = CSVAwareVectorSearch()
             self.hybrid_engine = HybridCSVEngine(model_name=model_name)
 
-        # Keep original engines for fallback
-        self.vector_search = VectorSearchEngine()
+        # Semantic search replaces both vector search and enhanced vector search
+        self.semantic_search = SemanticSearch(embed_model=embed_model)
         self.ollama_client = OllamaAPIClient(model_name=model_name)
         self.question_parser = None  # Will be initialized after loading CSV
 
         # Register cache clearing callback with data handler
-        self.data_handler.add_cache_clear_callback(self.vector_search.clear_cache)
+        self.data_handler.add_cache_clear_callback(self.semantic_search.clear)
 
         if self.use_enhanced_engines:
-            self.data_handler.add_cache_clear_callback(self.enhanced_vector_search.clear_cache)
             self.data_handler.add_cache_clear_callback(self.hybrid_engine.clear_cache)
 
         # Initialize context memory
@@ -94,8 +93,7 @@ class CSVQuestionAnswerer:
             csv_columns=self.data_handler.get_columns(),
         )
 
-        cache_info = self.vector_search.get_cache_info()
-        logger.debug("Vector cache info after loading CSV: %s", cache_info)
+        logger.debug("CSV loaded, semantic search index will be built on first query")
 
         return self.data_handler.get_columns()
 
@@ -163,6 +161,8 @@ class CSVQuestionAnswerer:
         if not question:
             return "Please ask a question."
 
+        logger.info("Question received: %s", question)
+
         # Reset conversation storage flag
         self._conversation_stored = False
 
@@ -203,6 +203,13 @@ class CSVQuestionAnswerer:
         if should_store:
             self._store_conversation_turn(question, answer, context_info)
 
+        # Log response status and content preview
+        if isinstance(answer, tuple):
+            answer_text, _, is_suggestion = answer
+            logger.info("Response status: suggestion, preview: %s", str(answer_text)[:200])
+        else:
+            logger.info("Response status: ok, preview: %s", str(answer)[:200])
+
         return answer
 
     def _get_answer_internal(self, question: str, csv_path: str | None = None, context_info=None) -> str | tuple:
@@ -210,12 +217,31 @@ class CSVQuestionAnswerer:
 
         # Use enhanced engines if available
         if self.use_enhanced_engines and self.data_handler.get_dataframe() is not None:
+            logger.info("Trying enhanced engines")
             enhanced_result = self._get_answer_with_enhanced_engines(question, context_info)
             if enhanced_result:
                 return enhanced_result
 
         # Fall back to original implementation
+        logger.info("Enhanced engines returned no result, falling back to original engine")
         return self._get_answer_original(question, csv_path, context_info)
+
+    def _answer_via_semantic_search(self, question: str, df: pd.DataFrame) -> str | None:
+        """Answer a question using semantic search over the DataFrame."""
+        try:
+            self.semantic_search.index(df)
+            chunks = self.semantic_search.search(question, top_k=5)
+            if not chunks:
+                logger.debug("No relevant chunks found for question")
+                return None
+            context = "\n\n".join(c.text for c in chunks)
+            return self.ollama_client.ask(context, question)
+        except OllamaConnectionError as e:
+            logger.error("Embedding model error: %s", e)
+            return None
+        except (OllamaTimeoutError, OllamaResponseError) as e:
+            logger.error("Ollama error during semantic search: %s", e, exc_info=True)
+            return None
 
     def _get_answer_with_enhanced_engines(self, question: str, context_info=None):
         """Get answer using the enhanced multi-engine approach."""
@@ -238,7 +264,7 @@ class CSVQuestionAnswerer:
             columns = self.data_handler.get_columns()
             engine_type = self.question_router.route_question(question, columns)
 
-            logger.debug("Question routed to: %s", engine_type)
+            logger.info("Question routed to engine: %s", engine_type)
 
             # Handle different engine types
             if engine_type == "structured":
@@ -259,18 +285,9 @@ class CSVQuestionAnswerer:
                     return result.data
 
             elif engine_type == "semantic":
-                # Use enhanced vector search
-                chunks = self.enhanced_vector_search.create_structured_chunks(filtered_df)
-                self.enhanced_vector_search.build_vector_index(chunks)
-                context = self.enhanced_vector_search.retrieve_context(question)
+                response = self._answer_via_semantic_search(question, filtered_df)
 
-                if context:
-                    try:
-                        response = self.ollama_client.ask(context, question)
-                    except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
-                        logger.error("Ollama error during semantic search: %s", e, exc_info=True)
-                        return None
-
+                if response:
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
                         result_count = self._count_results_in_answer(response)
@@ -621,16 +638,11 @@ class CSVQuestionAnswerer:
                     "Please check if the value exists or try a different query."
                 )
 
-            # If direct lookup fails or we don't have enough info, use vector search
-            # First make sure we have chunks to search through
-            if chunks is None:
-                chunks = self.data_handler.create_chunks()
-
-            # Only proceed with vector search if we have chunks
+            # Use semantic search for context retrieval
+            response = self._answer_via_semantic_search(question, self.data_handler.get_dataframe())
+            if response:
+                return response
             context = ""
-            if chunks and len(chunks) > 0:
-                self.vector_search.build_vector_index(chunks)
-                context = self.vector_search.retrieve_context(question)
 
             # Try to extract answer from context if we have target and ID columns
             if target_column and id_column and id_value:

@@ -32,7 +32,6 @@ class TestRunner:
             "csv_qa/question_answerer.py",
             "csv_qa/question_router.py",
             "csv_qa/structured_query_engine.py",
-            "csv_qa/enhanced_vector_search.py",
             "csv_qa/hybrid_engine.py",
             "tests/integration/",
             "tests/fixtures/",
@@ -88,17 +87,14 @@ class TestRunner:
         try:
             from csv_qa.question_router import QuestionRouter
             from csv_qa.structured_query_engine import StructuredQueryEngine
-            from csv_qa.enhanced_vector_search import CSVAwareVectorSearch
 
             # Test basic instantiation
             router = QuestionRouter()
             structured_engine = StructuredQueryEngine()
-            enhanced_search = CSVAwareVectorSearch()
 
             # Test that they have expected methods
             assert hasattr(router, "route_question")
             assert hasattr(structured_engine, "execute_query")
-            assert hasattr(enhanced_search, "create_structured_chunks")
 
         except ImportError as e:
             pytest.fail(f"Failed to import enhanced engines: {e}")
@@ -117,7 +113,7 @@ class TestRunner:
             # Test that enhanced engines are available
             assert hasattr(qa, "question_router")
             assert hasattr(qa, "structured_engine")
-            assert hasattr(qa, "enhanced_vector_search")
+            assert hasattr(qa, "semantic_search")
             assert hasattr(qa, "hybrid_engine")
 
         except Exception as e:

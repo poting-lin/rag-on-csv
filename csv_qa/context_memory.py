@@ -4,13 +4,12 @@ Context Memory module for maintaining conversation history and context awareness
 
 import json
 import logging
+import math
 import re
+from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any, Optional
 from dataclasses import dataclass, asdict
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +64,8 @@ class ConversationContext:
 
         self.vectorizer = None
         self.question_vectors = None
+        self._vocab: dict[str, int] = {}
+        self._doc_freq: dict[str, int] = {}
 
     def add_turn(
         self,
@@ -308,6 +309,8 @@ class ConversationContext:
         self.session_start = datetime.now()
         self.vectorizer = None
         self.question_vectors = None
+        self._vocab = {}
+        self._doc_freq = {}
 
         logger.debug("Cleared conversation context")
 
@@ -365,27 +368,20 @@ class ConversationContext:
         return any(word in question_lower for word in focus_words if len(word) > 3)
 
     def _find_similar_questions(self, current_question: str, max_results: int = 3) -> list[ConversationTurn]:
-        """Find questions similar to the current one using TF-IDF similarity"""
+        """Find questions similar to the current one using TF-IDF cosine similarity (pure Python)."""
         if not self.conversation_history or self.question_vectors is None:
             return []
 
         try:
-            # Transform current question
-            current_vector = self.vectorizer.transform([current_question])
-
-            # Calculate similarities
-            similarities = cosine_similarity(current_vector, self.question_vectors)[0]
-
-            # Get top similar questions (excluding perfect matches)
+            current_vec = self._tfidf_vector(current_question, self._vocab)
             similar_indices = []
-            for i, sim in enumerate(similarities):
-                # Exclude too similar (duplicates) and too different
+            for i, stored_vec in enumerate(self.question_vectors):
+                sim = self._cosine_similarity(current_vec, stored_vec)
+                # Exclude near-duplicates and unrelated questions
                 if 0.3 < sim < 0.95:
                     similar_indices.append((i, sim))
 
-            # Sort by similarity and take top results
             similar_indices.sort(key=lambda x: x[1], reverse=True)
-
             return [self.conversation_history[i] for i, _ in similar_indices[:max_results]]
 
         except Exception as e:
@@ -470,25 +466,137 @@ class ConversationContext:
                 entity: count for entity, count in self.mentioned_entities.items() if entity in current_entities
             }
 
+    def _tokenize(self, text: str) -> list[str]:
+        """Tokenize text into lowercase words, removing stopwords."""
+        _STOPWORDS = {
+            "a",
+            "an",
+            "the",
+            "and",
+            "or",
+            "but",
+            "is",
+            "are",
+            "was",
+            "were",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "from",
+            "as",
+            "i",
+            "me",
+            "my",
+            "we",
+            "our",
+            "you",
+            "your",
+            "it",
+            "its",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "shall",
+            "should",
+            "may",
+            "might",
+            "can",
+            "could",
+            "not",
+            "no",
+            "nor",
+            "so",
+            "yet",
+            "both",
+            "either",
+            "neither",
+            "what",
+            "which",
+            "who",
+            "whom",
+            "this",
+            "that",
+            "these",
+            "those",
+        }
+        tokens = re.findall(r"\b[a-z]{2,}\b", text.lower())
+        return [t for t in tokens if t not in _STOPWORDS]
+
+    def _tfidf_vector(self, text: str, vocab: dict[str, int]) -> dict[int, float]:
+        """Compute TF-IDF vector for a single text given a vocabulary index."""
+        tokens = self._tokenize(text)
+        if not tokens:
+            return {}
+        tf = Counter(tokens)
+        total = len(tokens)
+        num_docs = len(self.conversation_history)
+        vec: dict[int, float] = {}
+        for term, count in tf.items():
+            if term not in vocab:
+                continue
+            idx = vocab[term]
+            tf_score = count / total
+            # IDF: log((1 + N) / (1 + df)) + 1  (sklearn smooth variant)
+            df = self._doc_freq.get(term, 0)
+            idf = math.log((1 + num_docs) / (1 + df)) + 1
+            vec[idx] = tf_score * idf
+        return vec
+
+    @staticmethod
+    def _cosine_similarity(a: dict[int, float], b: dict[int, float]) -> float:
+        """Compute cosine similarity between two sparse TF-IDF vectors."""
+        if not a or not b:
+            return 0.0
+        dot = sum(a[k] * b[k] for k in a if k in b)
+        norm_a = math.sqrt(sum(v * v for v in a.values()))
+        norm_b = math.sqrt(sum(v * v for v in b.values()))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
     def _rebuild_question_vectors(self):
-        """Rebuild TF-IDF vectors for question similarity search"""
-        if not self.conversation_history:
+        """Rebuild TF-IDF vectors for question similarity search (pure Python)."""
+        if not self.conversation_history or len(self.conversation_history) < 2:
             self.vectorizer = None
             self.question_vectors = None
-            return
-
-        questions = [turn.question for turn in self.conversation_history]
-
-        if len(questions) == 1:
-            # Need at least 2 questions for TF-IDF
-            self.vectorizer = None
-            self.question_vectors = None
+            self._vocab: dict[str, int] = {}
+            self._doc_freq: dict[str, int] = {}
             return
 
         try:
-            self.vectorizer = TfidfVectorizer(stop_words="english", max_features=1000)
-            self.question_vectors = self.vectorizer.fit_transform(questions)
+            questions = [turn.question for turn in self.conversation_history]
+            tokenized = [self._tokenize(q) for q in questions]
+
+            # Build vocabulary and document frequencies
+            self._doc_freq = {}
+            for tokens in tokenized:
+                for term in set(tokens):
+                    self._doc_freq[term] = self._doc_freq.get(term, 0) + 1
+
+            all_terms = sorted(self._doc_freq.keys())
+            self._vocab = {term: idx for idx, term in enumerate(all_terms)}
+
+            # Build vectors for all stored questions
+            self.question_vectors = [self._tfidf_vector(q, self._vocab) for q in questions]
+            # Keep vectorizer as truthy sentinel (legacy attribute)
+            self.vectorizer = True
+
         except Exception as e:
             logger.debug("Error building question vectors: %s", e)
             self.vectorizer = None
             self.question_vectors = None
+            self._vocab = {}
+            self._doc_freq = {}

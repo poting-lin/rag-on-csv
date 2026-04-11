@@ -10,7 +10,6 @@ packages = [{include = "csv_qa"}]
 python = ">=3.13,<4.0"
 pandas = "^2.0.0"
 numpy = "^2.0.0"
-scikit-learn = "^1.2.0"
 requests = "^2.28.0"
 streamlit = "^1.45.1"
 

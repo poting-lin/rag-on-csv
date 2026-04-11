@@ -9,7 +9,7 @@ import pandas as pd
 
 from .exceptions import QueryResult
 from .structured_query_engine import StructuredQueryEngine
-from .enhanced_vector_search import CSVAwareVectorSearch
+from .semantic_search import SemanticSearch
 from .ollama_client import OllamaAPIClient
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ class HybridCSVEngine:
     def __init__(self, model_name: str = "llama3.2:1b") -> None:
         """Initialize the hybrid engine."""
         self.structured_engine = StructuredQueryEngine()
-        self.vector_engine = CSVAwareVectorSearch()
+        self.semantic_search = SemanticSearch()
         self.llm_client = OllamaAPIClient(model_name=model_name)
 
     def answer_question(self, question: str, df: pd.DataFrame) -> QueryResult:
@@ -88,27 +88,19 @@ class HybridCSVEngine:
             )
 
     def _try_semantic_analysis(self, question: str, df: pd.DataFrame) -> QueryResult:
-        """Attempt semantic analysis using enhanced vector search."""
+        """Attempt semantic analysis using embedding-based search."""
         try:
-            chunks = self.vector_engine.create_structured_chunks(df)
+            self.semantic_search.index(df)
+            chunks = self.semantic_search.search(question, top_k=5)
 
             if not chunks:
-                return QueryResult.fail(
-                    error_code="NO_CONTEXT",
-                    error_message="No chunks created.",
-                    engine="semantic",
-                )
-
-            self.vector_engine.build_vector_index(chunks)
-            context = self.vector_engine.retrieve_context(question, top_k=5)
-
-            if not context:
                 return QueryResult.fail(
                     error_code="NO_CONTEXT",
                     error_message="No relevant context found.",
                     engine="semantic",
                 )
 
+            context = "\n\n".join(c.text for c in chunks)
             llm_response = self._analyze_with_llm(question, context)
 
             if llm_response:
@@ -256,17 +248,12 @@ class HybridCSVEngine:
         """Get status information about the engines."""
         status: dict[str, Any] = {
             "structured_engine": "ready",
-            "vector_engine": "ready" if self.vector_engine.vectorizer is not None else "not_initialized",
+            "semantic_search": "ready" if self.semantic_search._chunks is not None else "not_indexed",
             "llm_client": "ready",
         }
-
-        if self.vector_engine.chunk_metadata:
-            status["vector_chunks"] = len(self.vector_engine.chunk_metadata)
-            status["chunk_types"] = self.vector_engine.get_chunk_types_summary()
-
         return status
 
     def clear_cache(self) -> None:
         """Clear all caches."""
-        self.vector_engine.clear_cache()
+        self.semantic_search.clear()
         logger.debug("Hybrid engine cache cleared")

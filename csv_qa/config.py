@@ -1,6 +1,17 @@
 """Application-wide configuration constants."""
 
-# Models shown in the "Download New Model" dropdown.
+# Default embedding model for semantic search.
+DEFAULT_EMBED_MODEL = "nomic-embed-text"
+
+# Embedding models shown in the "Download Embedding Model" dropdown.
+POPULAR_EMBEDDING_MODELS: list[str] = [
+    "nomic-embed-text",
+    "mxbai-embed-large",
+    "all-minilm",
+    "snowflake-arctic-embed",
+]
+
+# LLM models shown in the "Download New Model" dropdown.
 POPULAR_MODELS: list[str] = [
     "llama3.2:1b",
     "llama3.2:3b",
