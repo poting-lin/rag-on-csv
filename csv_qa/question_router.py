@@ -43,7 +43,8 @@ class QuestionRouter:
             # Exact filtering: "show records where EventType is Festival"
             r"(?:show|list|find|get)\s+records\s+where\s+(\w+)\s+(?:is|equals?|=)\s+(\w+)",
             # Aggregations: "what is the max DecibelsA?"
-            r"(?:what is|show|get)\s+(?:the\s+)?(?:max|maximum|min|minimum|avg|average|mean|sum|total|count)\s+(\w+)",
+            r"(?:what is|what's|show|get|give me|calculate)\s+(?:the\s+)?"
+            r"(?:max|maximum|min|minimum|avg|average|mean|median|sum|total|count|std|standard deviation)\s+",
             # Comparisons: "DecibelsA above 80"
             r"(\w+)\s+(?:above|below|over|under|greater|less|>|<|>=|<=)\s+(\d+)",
             # Direct column access: "show Location column"
@@ -53,7 +54,9 @@ class QuestionRouter:
             # Simple lookups: "EventType values", "unique Location"
             r"(?:unique|distinct)\s+(\w+)",
             # Basic statistics: "average of DecibelsA"
-            r"(?:average|mean|median)\s+(?:of\s+)?(\w+)",
+            r"(?:average|mean|median|std|standard deviation)\s+(?:of\s+)?(\w+)",
+            # "how much" with column context (handled by column check below)
+            r"how much\s+",
         ]
 
         # Check pattern matches
@@ -73,12 +76,25 @@ class QuestionRouter:
                 "find",
                 "list",
                 "what is",
+                "what's",
+                "give me",
+                "calculate",
+                "how much",
                 "max",
+                "maximum",
                 "min",
+                "minimum",
                 "average",
+                "avg",
+                "mean",
+                "median",
                 "count",
                 "sum",
                 "total",
+                "highest",
+                "lowest",
+                "std",
+                "standard deviation",
             ]
             if any(indicator in question_lower for indicator in simple_indicators):
                 logger.debug("Mentioned columns: %s with simple indicators", mentioned_columns)

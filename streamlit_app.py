@@ -24,7 +24,7 @@ import requests as http_requests
 import pandas as pd
 import streamlit as st
 
-from csv_qa.config import POPULAR_MODELS
+from csv_qa.config import DEFAULT_EMBED_MODEL, POPULAR_EMBEDDING_MODELS, POPULAR_MODELS
 from csv_qa.question_answerer import CSVQuestionAnswerer
 from csv_qa.exceptions import (
     CSVQAError,
@@ -53,28 +53,33 @@ class OllamaStatus(Enum):
     """Ollama service readiness status."""
 
     OLLAMA_DOWN = "ollama_down"
-    MODEL_DOWNLOADING = "model_downloading"
+    MODELS_DOWNLOADING = "models_downloading"
     READY = "ready"
 
 
-def check_ollama_ready() -> OllamaStatus:
-    """Check if Ollama is running and the model is available.
+def check_ollama_ready() -> tuple[OllamaStatus, list[str]]:
+    """Check if Ollama is running and both LLM and embedding models are available.
 
     Returns:
-        OllamaStatus indicating the current state.
+        Tuple of (status, list of model names still downloading).
     """
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
-    model_name = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+    llm_model = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+    embed_model = os.environ.get("OLLAMA_EMBED_MODEL", DEFAULT_EMBED_MODEL)
     try:
         resp = http_requests.get(f"{base_url}/api/tags", timeout=3)
         resp.raise_for_status()
-        models = resp.json().get("models", [])
-        for model in models:
-            if model.get("name", "").startswith(model_name):
-                return OllamaStatus.READY
-        return OllamaStatus.MODEL_DOWNLOADING
+        model_names = [m.get("name", "") for m in resp.json().get("models", [])]
+        pending: list[str] = []
+        if not any(name.startswith(llm_model) for name in model_names):
+            pending.append(llm_model)
+        if not any(name.startswith(embed_model) for name in model_names):
+            pending.append(embed_model)
+        if not pending:
+            return OllamaStatus.READY, []
+        return OllamaStatus.MODELS_DOWNLOADING, pending
     except Exception:
-        return OllamaStatus.OLLAMA_DOWN
+        return OllamaStatus.OLLAMA_DOWN, []
 
 
 def get_ollama_models() -> list[str]:
@@ -151,11 +156,14 @@ def initialize_session_state() -> None:
         st.session_state.suggested_questions = []
 
 
-def create_qa_instance(model_name: str, enable_context_memory: bool) -> CSVQuestionAnswerer | None:
+def create_qa_instance(
+    model_name: str, embed_model: str | None, enable_context_memory: bool
+) -> CSVQuestionAnswerer | None:
     """Create and configure QA instance."""
     try:
         return CSVQuestionAnswerer(
             model_name=model_name,
+            embed_model=embed_model,
             enable_context_memory=enable_context_memory,
         )
     except CSVQAError as e:
@@ -295,15 +303,15 @@ def main() -> None:
     )
 
     # Check Ollama readiness (useful in Docker where model may still be downloading)
-    status = check_ollama_ready()
+    status, pending_models = check_ollama_ready()
     if status != OllamaStatus.READY:
         st.title("CSV Question Answering Bot")
         if status == OllamaStatus.OLLAMA_DOWN:
             st.status("Waiting for Ollama service to start...", state="running")
         else:
-            model_name = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
+            models_text = ", ".join(pending_models)
             st.status(
-                f"Downloading model {model_name}... This may take a few minutes on first run.",
+                f"Downloading model(s): {models_text}... This may take a few minutes on first run.",
                 state="running",
             )
         time.sleep(3)
@@ -318,16 +326,18 @@ def main() -> None:
         st.header("Configuration")
 
         available_models = get_ollama_models()
+        embed_model_names = {e.split(":")[0] for e in POPULAR_EMBEDDING_MODELS}
+        available_llm_models = [m for m in available_models if m.split(":")[0] not in embed_model_names]
 
-        if available_models:
+        if available_llm_models:
             model_name = st.selectbox(
                 "Ollama Model",
-                available_models,
+                available_llm_models,
                 index=0,
-                help="Select from models available in your Ollama instance",
+                help="Select the LLM model for question answering",
             )
         else:
-            st.warning("No models available yet. Download one below.")
+            st.warning("No LLM models available yet. Download one below.")
             model_name = "llama3.2:1b"
 
         # Download new model section
@@ -342,6 +352,40 @@ def main() -> None:
                 )
                 if st.button("Pull", use_container_width=True):
                     if pull_ollama_model(selected_model):
+                        time.sleep(1)
+                        st.rerun()
+
+        # Embedding model section
+        st.subheader("Embedding Model")
+        available_embed_models = [m for m in available_models if m.split(":")[0] in embed_model_names]
+
+        if available_embed_models:
+            default_embed_idx = 0
+            for i, m in enumerate(available_embed_models):
+                if m.startswith(DEFAULT_EMBED_MODEL):
+                    default_embed_idx = i
+                    break
+            embed_model = st.selectbox(
+                "Embedding Model",
+                available_embed_models,
+                index=default_embed_idx,
+                help="Select the embedding model for semantic search",
+            )
+        else:
+            st.warning("No embedding models available. Download one below.")
+            embed_model = DEFAULT_EMBED_MODEL
+
+        downloadable_embed = [m for m in POPULAR_EMBEDDING_MODELS if m not in available_models]
+        if downloadable_embed:
+            with st.expander("Download Embedding Model"):
+                selected_embed = st.selectbox(
+                    "Choose an embedding model",
+                    downloadable_embed,
+                    index=0,
+                    help="Select an embedding model and click Pull to download it",
+                )
+                if st.button("Pull Embedding Model", use_container_width=True):
+                    if pull_ollama_model(selected_embed):
                         time.sleep(1)
                         st.rerun()
 
@@ -395,11 +439,13 @@ def main() -> None:
         if (
             st.session_state.qa_instance is None
             or getattr(st.session_state, "current_model", None) != model_name
+            or getattr(st.session_state, "current_embed_model", None) != embed_model
             or getattr(st.session_state, "current_context", None) != enable_context_memory
         ):
             with st.spinner("Initializing Q&A system..."):
-                st.session_state.qa_instance = create_qa_instance(model_name, enable_context_memory)
+                st.session_state.qa_instance = create_qa_instance(model_name, embed_model, enable_context_memory)
                 st.session_state.current_model = model_name
+                st.session_state.current_embed_model = embed_model
                 st.session_state.current_context = enable_context_memory
 
         if uploaded_file and st.session_state.qa_instance:
@@ -628,6 +674,7 @@ def main() -> None:
                 st.warning("CSV File: Not loaded")
 
             st.info(f"Model: {model_name}")
+            st.info(f"Embedding Model: {embed_model}")
             st.info(f"Context Memory: {'On' if enable_context_memory else 'Off'}")
             st.info(f"Interactive Mode: {'On' if interactive_mode else 'Off'}")
 
