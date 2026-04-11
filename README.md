@@ -16,7 +16,30 @@ Open [http://localhost:8501](http://localhost:8501) in your browser. On first la
 
 To stop: `docker compose down`
 
-To change the model: `OLLAMA_MODEL=llama3.1:8b docker compose up`
+### Choose Your Models
+
+The system uses two models: an **LLM** for answering questions and an **embedding model** for semantic search. Set them via environment variables:
+
+```bash
+# Default (small and fast)
+docker compose up
+
+# Use a larger LLM for better answers
+OLLAMA_MODEL=llama3.1:8b docker compose up
+
+# Use a different embedding model
+OLLAMA_EMBED_MODEL=mxbai-embed-large docker compose up
+
+# Combine both
+OLLAMA_MODEL=gemma3:4b OLLAMA_EMBED_MODEL=mxbai-embed-large docker compose up
+```
+
+| Model type | Default | Options |
+|---|---|---|
+| LLM (`OLLAMA_MODEL`) | `llama3.2:1b` | `llama3.2:3b`, `llama3.1:8b`, `gemma3:4b`, `gemma4:e2b`, `mistral`, `qwen3:8b` |
+| Embedding (`OLLAMA_EMBED_MODEL`) | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `snowflake-arctic-embed` |
+
+You can also download additional models from the web UI sidebar after the app starts.
 
 ## Features
 
@@ -46,13 +69,13 @@ Analyzes questions and routes them based on patterns:
 - **Complex patterns**: `"find anomalies in sales data"` → Hybrid Engine
 
 
-### **Enhanced Vector Search Engine**  
-CSV-aware semantic search with rich context:
+### **Semantic Search Engine**
+Neural embedding-based search powered by Ollama (replaces TF-IDF):
+- **Ollama embeddings**: Uses models like `nomic-embed-text` via `/api/embed`
+- **Adaptive chunking**: Sliding window size adapts to table width, no row cap
 - **Column descriptions**: Detailed metadata about each column
 - **Statistical summaries**: Mean, median, range, distribution info
 - **Categorical distributions**: Unique values and frequencies
-- **Relationship analysis**: Cross-column correlations and dependencies
-- **Data quality info**: Missing values, outliers, data types
 
 ### **Hybrid Engine**
 Combines multiple approaches with confidence scoring:
