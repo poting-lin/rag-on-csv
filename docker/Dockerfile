@@ -1,5 +1,5 @@
 # Stage 1: Build — install dependencies via Poetry
-FROM python:3.11-slim AS build
+FROM python:3.13-slim AS build
 
 RUN pip install --no-cache-dir poetry==2.1.3 poetry-plugin-export==1.9.0
 
@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 
 # Stage 2: Runtime — copy app code and venv
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 COPY --from=build /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
