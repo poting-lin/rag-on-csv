@@ -53,16 +53,15 @@ class OllamaStatus(Enum):
     """Ollama service readiness status."""
 
     OLLAMA_DOWN = "ollama_down"
-    LLM_DOWNLOADING = "llm_downloading"
-    EMBED_DOWNLOADING = "embed_downloading"
+    MODELS_DOWNLOADING = "models_downloading"
     READY = "ready"
 
 
-def check_ollama_ready() -> OllamaStatus:
+def check_ollama_ready() -> tuple[OllamaStatus, list[str]]:
     """Check if Ollama is running and both LLM and embedding models are available.
 
     Returns:
-        OllamaStatus indicating the current state.
+        Tuple of (status, list of model names still downloading).
     """
     base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
     llm_model = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
@@ -71,15 +70,16 @@ def check_ollama_ready() -> OllamaStatus:
         resp = http_requests.get(f"{base_url}/api/tags", timeout=3)
         resp.raise_for_status()
         model_names = [m.get("name", "") for m in resp.json().get("models", [])]
-        llm_ready = any(name.startswith(llm_model) for name in model_names)
-        embed_ready = any(name.startswith(embed_model) for name in model_names)
-        if llm_ready and embed_ready:
-            return OllamaStatus.READY
-        if not llm_ready:
-            return OllamaStatus.LLM_DOWNLOADING
-        return OllamaStatus.EMBED_DOWNLOADING
+        pending: list[str] = []
+        if not any(name.startswith(llm_model) for name in model_names):
+            pending.append(llm_model)
+        if not any(name.startswith(embed_model) for name in model_names):
+            pending.append(embed_model)
+        if not pending:
+            return OllamaStatus.READY, []
+        return OllamaStatus.MODELS_DOWNLOADING, pending
     except Exception:
-        return OllamaStatus.OLLAMA_DOWN
+        return OllamaStatus.OLLAMA_DOWN, []
 
 
 def get_ollama_models() -> list[str]:
@@ -303,21 +303,15 @@ def main() -> None:
     )
 
     # Check Ollama readiness (useful in Docker where model may still be downloading)
-    status = check_ollama_ready()
+    status, pending_models = check_ollama_ready()
     if status != OllamaStatus.READY:
         st.title("CSV Question Answering Bot")
         if status == OllamaStatus.OLLAMA_DOWN:
             st.status("Waiting for Ollama service to start...", state="running")
-        elif status == OllamaStatus.LLM_DOWNLOADING:
-            llm_model = os.environ.get("OLLAMA_MODEL", "llama3.2:1b")
-            st.status(
-                f"Downloading LLM model {llm_model}... This may take a few minutes on first run.",
-                state="running",
-            )
         else:
-            embed_model_name = os.environ.get("OLLAMA_EMBED_MODEL", DEFAULT_EMBED_MODEL)
+            models_text = ", ".join(pending_models)
             st.status(
-                f"Downloading embedding model {embed_model_name}...",
+                f"Downloading model(s): {models_text}... This may take a few minutes on first run.",
                 state="running",
             )
         time.sleep(3)
