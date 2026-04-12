@@ -3,8 +3,10 @@ CSV Question Answerer module - main class that orchestrates the question answeri
 """
 
 import logging
+import os
 import re
 import json
+from collections import OrderedDict
 import pandas as pd
 from .data_handler import CSVDataHandler
 from .fuzzy_matcher import FuzzyMatcher
@@ -22,6 +24,9 @@ from .exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+RESPONSE_CACHE_MAX_SIZE = 100
 
 
 class CSVQuestionAnswerer:
@@ -64,8 +69,12 @@ class CSVQuestionAnswerer:
         self.ollama_client = OllamaAPIClient(model_name=model_name)
         self.question_parser = None  # Will be initialized after loading CSV
 
+        # Response cache: (question_lower, csv_path, mtime, model_name) -> answer
+        self._response_cache: OrderedDict = OrderedDict()
+
         # Register cache clearing callback with data handler
         self.data_handler.add_cache_clear_callback(self.semantic_search.clear)
+        self.data_handler.add_cache_clear_callback(self._response_cache.clear)
 
         if self.use_enhanced_engines:
             self.data_handler.add_cache_clear_callback(self.hybrid_engine.clear_cache)
@@ -96,6 +105,77 @@ class CSVQuestionAnswerer:
         logger.debug("CSV loaded, semantic search index will be built on first query")
 
         return self.data_handler.get_columns()
+
+    def check_for_quick_suggestions(
+        self, question: str, csv_path: str | None = None
+    ) -> tuple[str, list[str]] | None:
+        """Fast local typo check before streaming.
+
+        Mirrors the fuzzy-match branch in _get_answer_original so the
+        streaming UI can surface suggestions without running the full
+        LLM pipeline. Returns (message, suggestions) on hit, or None if
+        the question should fall through to normal answering.
+        """
+        if csv_path and not self.data_handler.is_loaded():
+            self.load_csv(csv_path)
+        df = self.data_handler.get_dataframe()
+        if df is None:
+            return None
+
+        search_term = question.lower().strip()
+        if len(search_term) >= 10:
+            return None
+
+        if any(search_term in str(row).lower() for _, row in df.iterrows()):
+            return None
+
+        similar_values = self.fuzzy_matcher.find_similar_values(search_term, df)
+        if not similar_values:
+            return None
+
+        if len(similar_values) == 1:
+            message = (
+                f"I couldn't find '{question.strip()}' in the CSV data. "
+                f"Did you mean '{similar_values[0]}'? If yes, please ask about that instead."
+            )
+            return message, [similar_values[0]]
+
+        suggestions_str = ", ".join(f"'{v}'" for v in similar_values[:3])
+        message = (
+            f"I couldn't find '{question.strip()}' in the CSV data. "
+            f"Did you mean one of these: {suggestions_str}? "
+            "If yes, please ask about that instead."
+        )
+        return message, similar_values[:3]
+
+    def answer_question_stream(self, question: str, csv_path: str | None = None):
+        """Yield answer tokens for a question, streaming from the LLM.
+
+        Uses the semantic search path end-to-end so the LLM's generation
+        can be streamed. Structured or direct-lookup answers should be
+        obtained via the non-streaming answer_question().
+
+        Yields:
+            Strings (token chunks). Network/LLM errors propagate as the
+            usual OllamaConnectionError / OllamaTimeoutError / OllamaResponseError
+            so the caller can distinguish them.
+        """
+        if csv_path and not self.data_handler.is_loaded():
+            self.load_csv(csv_path)
+        if not self.data_handler.is_loaded():
+            yield "CSV not loaded."
+            return
+
+        df = self.data_handler.get_dataframe()
+        self.semantic_search.index(df)
+        chunks = self.semantic_search.search(question, top_k=5)
+        if not chunks:
+            yield "I couldn't find any matching information in the CSV data."
+            return
+
+        retrieved = "\n\n".join(c.text for c in reversed(chunks))
+        context = self._build_llm_context(retrieved)
+        yield from self.ollama_client.ask_stream(context, question)
 
     def _build_llm_context(self, retrieved: str) -> str:
         """Prepend the cached schema card to retrieved context.
@@ -180,6 +260,13 @@ class CSVQuestionAnswerer:
 
         logger.info("Question received: %s", question)
 
+        cache_key = self._cache_key(question, csv_path)
+        if cache_key is not None and cache_key in self._response_cache:
+            self._response_cache.move_to_end(cache_key)
+            cached = self._response_cache[cache_key]
+            logger.info("Response cache hit")
+            return cached
+
         # Reset conversation storage flag
         self._conversation_stored = False
 
@@ -227,7 +314,34 @@ class CSVQuestionAnswerer:
         else:
             logger.info("Response status: ok, preview: %s", str(answer)[:200])
 
+        if cache_key is not None and not isinstance(answer, tuple):
+            self._cache_response(cache_key, answer)
+
         return answer
+
+    def _cache_key(self, question: str, csv_path: str | None) -> tuple | None:
+        """Build a cache key, or return None if caching should be skipped.
+
+        Caching is skipped when context memory is active (stateful answers)
+        or the CSV path is unknown (cannot detect file changes).
+        """
+        if self.enable_context_memory and self.context_memory:
+            return None
+        path = csv_path or self.data_handler.current_csv_path
+        if not path:
+            return None
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return None
+        return (question.strip().lower(), path, mtime, self.model_name)
+
+    def _cache_response(self, key: tuple, answer) -> None:
+        """Insert an answer into the LRU cache, evicting oldest if full."""
+        self._response_cache[key] = answer
+        self._response_cache.move_to_end(key)
+        while len(self._response_cache) > RESPONSE_CACHE_MAX_SIZE:
+            self._response_cache.popitem(last=False)
 
     def _get_answer_internal(self, question: str, csv_path: str | None = None, context_info=None) -> str | tuple:
         """Internal method to get answer with enhanced multi-engine approach."""

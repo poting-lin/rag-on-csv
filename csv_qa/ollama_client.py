@@ -1,7 +1,10 @@
 import logging
 import json
 import os
+import random
 import re
+import time
+from collections.abc import Callable, Iterator
 
 import requests
 
@@ -12,6 +15,113 @@ from .exceptions import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_BASE_DELAY = 0.5
+
+FALLBACK_ANSWER = (
+    "I don't have enough information to answer that question based on the CSV data provided."
+)
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9]{2,}")
+_NUMBER_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
+
+
+def estimate_confidence(answer: str, context: str) -> float:
+    """Score how well an LLM answer is grounded in the provided context.
+
+    Returns a value in [0.0, 1.0]. The score is heuristic — it rewards
+    overlap of content words and numbers between answer and context,
+    penalises very short or fallback answers. Useful as a post-hoc
+    signal to flag possible hallucinations, not a ground-truth measure.
+    """
+    if not answer:
+        return 0.0
+    if answer.strip() == FALLBACK_ANSWER:
+        return 0.3
+
+    stripped = answer.strip()
+    if len(stripped) < 15:
+        return 0.2
+
+    context_lower = context.lower()
+    answer_words = {w.lower() for w in _WORD_RE.findall(stripped)}
+    if not answer_words:
+        return 0.4
+
+    grounded_words = sum(1 for w in answer_words if w in context_lower)
+    word_ratio = grounded_words / len(answer_words)
+
+    answer_numbers = set(_NUMBER_RE.findall(stripped))
+    if answer_numbers:
+        grounded_numbers = sum(1 for n in answer_numbers if n in context)
+        number_ratio = grounded_numbers / len(answer_numbers)
+    else:
+        number_ratio = 1.0
+
+    score = 0.4 + 0.4 * word_ratio + 0.2 * number_ratio
+    return min(1.0, max(0.0, score))
+
+
+def _with_retry(
+    fn: Callable[[], requests.Response],
+    attempts: int = DEFAULT_RETRY_ATTEMPTS,
+    base_delay: float = DEFAULT_RETRY_BASE_DELAY,
+) -> requests.Response:
+    """Run fn with exponential backoff on transient failures.
+
+    Retries on transport errors (connection, timeout) and on 5xx/429
+    HTTP responses. Returns the Response on success or on non-retriable
+    4xx so callers can inspect the status and produce their own errors.
+    Raises OllamaConnectionError / OllamaTimeoutError only after all
+    transport attempts are exhausted.
+    """
+    last_transport_exc: Exception | None = None
+    last_response: requests.Response | None = None
+
+    for attempt in range(attempts):
+        should_retry = False
+        try:
+            response = fn()
+        except requests.exceptions.Timeout as e:
+            last_transport_exc = e
+            should_retry = True
+            if attempt == attempts - 1:
+                raise OllamaTimeoutError(detail=str(e)) from e
+        except requests.exceptions.ConnectionError as e:
+            last_transport_exc = e
+            should_retry = True
+            if attempt == attempts - 1:
+                raise OllamaConnectionError(detail=str(e)) from e
+        except requests.exceptions.RequestException as e:
+            last_transport_exc = e
+            should_retry = True
+            if attempt == attempts - 1:
+                raise OllamaConnectionError(detail=str(e)) from e
+        else:
+            last_response = response
+            if response.status_code == 429 or response.status_code >= 500:
+                should_retry = attempt < attempts - 1
+                if not should_retry:
+                    return response
+            else:
+                return response
+
+        if should_retry:
+            sleep_for = base_delay * (2**attempt) + random.uniform(0, base_delay)
+            logger.warning(
+                "Ollama call failed (attempt %d/%d): %s. Retrying in %.2fs",
+                attempt + 1,
+                attempts,
+                last_transport_exc or (last_response and last_response.status_code),
+                sleep_for,
+            )
+            time.sleep(sleep_for)
+
+    if last_response is not None:
+        return last_response
+    raise OllamaConnectionError(detail=f"Exhausted retries: {last_transport_exc}")
 
 
 QA_SYSTEM_RULES = """You are a strict CSV data assistant. You answer questions using ONLY the provided context.
@@ -93,7 +203,11 @@ class OllamaAPIClient:
         logger.debug("Sending question to Ollama API")
 
         response = self._make_request(prompt, temperature=0.2, num_predict=500, timeout=60)
-        return self._parse_response(response)
+        answer = self._parse_response(response)
+        confidence = estimate_confidence(answer, context)
+        if confidence < 0.5:
+            logger.warning("Low-confidence answer (score=%.2f): %s", confidence, answer[:120])
+        return answer
 
     def analyze_question(self, question: str, columns: list[str], sample_data: str) -> dict | None:
         """Analyze a question and return a single-step query plan.
@@ -187,20 +301,7 @@ class OllamaAPIClient:
         timeout: int = 60,
         response_format: str | None = None,
     ) -> requests.Response:
-        """Send a request to the Ollama API.
-
-        Args:
-            prompt: The full prompt text.
-            temperature: Sampling temperature.
-            num_predict: Max tokens to generate.
-            timeout: Request timeout in seconds.
-            response_format: Optional Ollama `format` value (e.g. "json")
-                to constrain output to valid JSON.
-
-        Raises:
-            OllamaConnectionError: If Ollama service is unreachable.
-            OllamaTimeoutError: If the request times out.
-        """
+        """Send a request to the Ollama API, with retry on transient failures."""
         payload: dict = {
             "model": self.model_name,
             "prompt": prompt,
@@ -213,19 +314,61 @@ class OllamaAPIClient:
         if response_format:
             payload["format"] = response_format
 
-        try:
-            response = requests.post(self.api_url, json=payload, timeout=timeout)
-        except requests.exceptions.ConnectionError as e:
-            raise OllamaConnectionError(detail=str(e)) from e
-        except requests.exceptions.Timeout as e:
-            raise OllamaTimeoutError(detail=str(e)) from e
-        except requests.exceptions.RequestException as e:
-            raise OllamaConnectionError(detail=str(e)) from e
-
+        response = _with_retry(lambda: requests.post(self.api_url, json=payload, timeout=timeout))
         if response.status_code != 200:
             raise OllamaResponseError(detail=f"HTTP {response.status_code}: {response.text}")
-
         return response
+
+    def ask_stream(
+        self,
+        context: str,
+        question: str,
+        temperature: float = 0.2,
+        num_predict: int = 500,
+        timeout: int = 60,
+    ) -> Iterator[str]:
+        """Stream a grounded answer token-by-token.
+
+        Yields text chunks as they arrive from Ollama. Consumers join or
+        display them incrementally. Errors after the first chunk end the
+        stream; errors before the first chunk raise.
+        """
+        prompt = (
+            f"{QA_SYSTEM_RULES}\n\n"
+            f"## Context\n{context}\n\n"
+            f"## Question\n{question}\n\n"
+            f"## Answer\n"
+        )
+        payload: dict = {
+            "model": self.model_name,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": temperature, "num_predict": num_predict},
+        }
+
+        def _post() -> requests.Response:
+            return requests.post(self.api_url, json=payload, timeout=timeout, stream=True)
+
+        response = _with_retry(_post)
+        if response.status_code != 200:
+            response.close()
+            raise OllamaResponseError(detail=f"HTTP {response.status_code}: {response.text}")
+
+        try:
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chunk = data.get("response", "")
+                if chunk:
+                    yield chunk
+                if data.get("done"):
+                    break
+        finally:
+            response.close()
 
     def _parse_response(self, response: requests.Response) -> str:
         """Parse the Ollama API response and extract the text content.
@@ -245,7 +388,7 @@ class OllamaAPIClient:
                             "LLM response too short or incomplete (%d chars), returning fallback",
                             len(content),
                         )
-                        return "I don't have enough information to answer that question based on the CSV data provided."
+                        return FALLBACK_ANSWER
                     return content
 
                 logger.warning("Unexpected JSON format: missing 'response' key")

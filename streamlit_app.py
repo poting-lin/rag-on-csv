@@ -12,12 +12,14 @@ A web interface for the RAG-based CSV question answering system with:
 - Download results
 """
 
+import atexit
 import json
 import logging
 import os
 import tempfile
 import time
 from enum import Enum
+from pathlib import Path
 
 import requests as http_requests
 
@@ -154,6 +156,34 @@ def initialize_session_state() -> None:
         st.session_state.current_csv_file = None
     if "suggested_questions" not in st.session_state:
         st.session_state.suggested_questions = []
+    if "managed_tempfiles" not in st.session_state:
+        st.session_state.managed_tempfiles = []
+        atexit.register(_cleanup_session_tempfiles, st.session_state.managed_tempfiles)
+    if "last_question" not in st.session_state:
+        st.session_state.last_question = None
+
+
+def _cleanup_session_tempfiles(paths: list[str]) -> None:
+    """Remove tempfiles tracked in the session. Safe to call multiple times."""
+    for path in paths:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except Exception as e:
+            logger.debug("Failed to remove tempfile %s: %s", path, e)
+    paths.clear()
+
+
+def _track_tempfile(path: str) -> None:
+    """Register a tempfile for cleanup and remove any previous tempfile in the session."""
+    existing = st.session_state.managed_tempfiles
+    for old in existing:
+        if old != path:
+            try:
+                Path(old).unlink(missing_ok=True)
+            except Exception as e:
+                logger.debug("Failed to remove previous tempfile %s: %s", old, e)
+    existing.clear()
+    existing.append(path)
 
 
 def create_qa_instance(
@@ -182,6 +212,7 @@ def load_csv_file(uploaded_file, qa_instance: CSVQuestionAnswerer):
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
 
+        _track_tempfile(tmp_file_path)
         columns = qa_instance.load_csv(tmp_file_path)
         df = pd.read_csv(tmp_file_path)
         return tmp_file_path, columns, df
@@ -239,41 +270,41 @@ def process_question(
     csv_file_path: str,
     interactive_mode: bool,
 ) -> tuple:
-    """Process a question and return the answer."""
+    """Process a question and return (answer, suggested_values, is_suggestion, error_type)."""
     try:
         if interactive_mode:
             result = qa_instance.process_question_with_suggestions(csv_file_path, question)
             if isinstance(result, tuple) and len(result) == 3:
                 answer, suggested_values, is_suggestion = result
-                return answer, suggested_values, is_suggestion
-            return result, [], False
+                return answer, suggested_values, is_suggestion, None
+            return result, [], False, None
         else:
             answer = qa_instance.answer_question(question, csv_file_path)
             if isinstance(answer, tuple) and len(answer) == 3:
                 suggestion_text, suggested_values, is_suggestion = answer
-                return suggestion_text, suggested_values, is_suggestion
-            return answer, [], False
+                return suggestion_text, suggested_values, is_suggestion, None
+            return answer, [], False, None
 
     except OllamaConnectionError as e:
         st.error(e.user_message)
-        return e.user_message, [], False
+        return e.user_message, [], False, "connection"
     except OllamaTimeoutError as e:
         st.warning(e.user_message)
-        return e.user_message, [], False
+        return e.user_message, [], False, "timeout"
     except OllamaResponseError as e:
         st.error(e.user_message)
-        return e.user_message, [], False
+        return e.user_message, [], False, "response"
     except QueryEngineError as e:
         st.error(f"Query engine error: {e.user_message}")
-        return e.user_message, [], False
+        return e.user_message, [], False, "engine"
     except CSVQAError as e:
         st.error(f"Error: {e.user_message}")
-        return e.user_message, [], False
+        return e.user_message, [], False, "other"
     except Exception:
         logger.error("Unhandled exception processing question", exc_info=True)
         error_msg = "An unexpected error occurred. Enable debug mode for details."
         st.error(error_msg)
-        return error_msg, [], False
+        return error_msg, [], False, "other"
 
 
 def main() -> None:
@@ -607,22 +638,26 @@ def main() -> None:
                             st.write(fallback_answer)
 
                     else:
-                        answer, suggested_values, is_suggestion = process_question(
-                            question,
-                            st.session_state.qa_instance,
-                            st.session_state.current_csv_path,
-                            interactive_mode,
-                        )
+                        start_ts = time.perf_counter()
+                        suggestion_hit = None
+                        if interactive_mode:
+                            try:
+                                suggestion_hit = st.session_state.qa_instance.check_for_quick_suggestions(
+                                    question, st.session_state.current_csv_path
+                                )
+                            except Exception:
+                                logger.error("Suggestion check failed", exc_info=True)
 
-                        st.session_state.conversation_history.append((question, answer))
-
-                        if is_suggestion and suggested_values and interactive_mode:
-                            st.warning(f"**Suggestion**: {answer}")
+                        if suggestion_hit is not None:
+                            suggestion_message, suggested_values = suggestion_hit
+                            st.warning(f"**Suggestion**: {suggestion_message}")
+                            answer = suggestion_message
+                            error_type = None
 
                             if len(suggested_values) == 1:
                                 if st.button(f"Use suggestion: {suggested_values[0]}"):
                                     with st.spinner("Processing suggestion..."):
-                                        corrected_answer, _, _ = process_question(
+                                        corrected_answer, _, _, _ = process_question(
                                             suggested_values[0],
                                             st.session_state.qa_instance,
                                             st.session_state.current_csv_path,
@@ -637,17 +672,56 @@ def main() -> None:
                                 for i, suggestion in enumerate(suggested_values):
                                     if st.button(f"{suggestion}", key=f"suggestion_{i}"):
                                         with st.spinner("Processing suggestion..."):
-                                            corrected_answer, _, _ = process_question(
+                                            corrected_answer, _, _, _ = process_question(
                                                 suggestion,
                                                 st.session_state.qa_instance,
                                                 st.session_state.current_csv_path,
                                                 False,
                                             )
-                                            st.session_state.conversation_history.append((suggestion, corrected_answer))
+                                            st.session_state.conversation_history.append(
+                                                (suggestion, corrected_answer)
+                                            )
                                             st.rerun()
                         else:
                             st.success("**Answer:**")
-                            st.write(answer)
+                            error_type = None
+                            answer = ""
+                            try:
+                                stream = st.session_state.qa_instance.answer_question_stream(
+                                    question, st.session_state.current_csv_path
+                                )
+                                answer = st.write_stream(stream)
+                            except OllamaTimeoutError as e:
+                                answer = e.user_message
+                                error_type = "timeout"
+                                st.warning(answer)
+                            except OllamaConnectionError as e:
+                                answer = e.user_message
+                                error_type = "connection"
+                                st.error(answer)
+                            except OllamaResponseError as e:
+                                answer = e.user_message
+                                error_type = "response"
+                                st.error(answer)
+                            except CSVQAError as e:
+                                answer = e.user_message
+                                error_type = "other"
+                                st.error(answer)
+                            except Exception:
+                                logger.error("Unhandled error during streaming", exc_info=True)
+                                answer = "An unexpected error occurred."
+                                error_type = "other"
+                                st.error(answer)
+
+                        elapsed = time.perf_counter() - start_ts
+                        st.session_state.conversation_history.append((question, answer))
+                        st.session_state.last_question = question
+                        st.session_state.last_error_type = error_type
+                        st.caption(f"Answered in {elapsed:.1f}s")
+
+                        if error_type in {"timeout", "connection"}:
+                            if st.button("Retry", key=f"retry_{len(st.session_state.conversation_history)}"):
+                                st.rerun()
 
         else:
             st.info("Please upload a CSV file or select sample data to get started!")

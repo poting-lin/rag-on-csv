@@ -15,6 +15,7 @@ import requests
 
 from .config import DEFAULT_EMBED_MODEL
 from .exceptions import OllamaConnectionError
+from .ollama_client import _with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -39,24 +40,29 @@ class OllamaEmbedder:
         return result
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts via the Ollama API.
+        """Embed a batch of texts via the Ollama API, with retry on transient failures.
 
         Raises:
             OllamaConnectionError: If Ollama is unreachable or returns an error.
         """
-        try:
-            response = requests.post(
+        def _post() -> requests.Response:
+            return requests.post(
                 self.embed_url,
                 json={"model": self.model_name, "input": texts},
                 timeout=120,
             )
-        except requests.exceptions.ConnectionError as e:
-            raise OllamaConnectionError(detail=str(e)) from e
-        except requests.exceptions.RequestException as e:
+
+        try:
+            response = _with_retry(_post)
+        except OllamaConnectionError:
+            raise
+        except Exception as e:
             raise OllamaConnectionError(detail=str(e)) from e
 
         if response.status_code == 404:
-            raise OllamaConnectionError(detail=f"Model '{self.model_name}' not available. Pull it via the sidebar.")
+            raise OllamaConnectionError(
+                detail=f"Model '{self.model_name}' not available. Pull it via the sidebar."
+            )
         if response.status_code != 200:
             raise OllamaConnectionError(detail=f"HTTP {response.status_code}: {response.text}")
 
