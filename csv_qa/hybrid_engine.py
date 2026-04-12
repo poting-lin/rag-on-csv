@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+from .data_handler import build_schema_card
 from .exceptions import QueryResult
 from .structured_query_engine import StructuredQueryEngine
 from .enhanced_vector_search import CSVAwareVectorSearch
@@ -108,7 +109,9 @@ class HybridCSVEngine:
                     engine="semantic",
                 )
 
-            llm_response = self._analyze_with_llm(question, context)
+            schema = build_schema_card(df)
+            full_context = f"## Schema\n{schema}\n\n## Retrieved rows\n{context}"
+            llm_response = self._analyze_with_llm(question, full_context)
 
             if llm_response:
                 confidence = self._calculate_semantic_confidence(question, context, llm_response)
@@ -173,30 +176,7 @@ class HybridCSVEngine:
 
     def _create_basic_context(self, df: pd.DataFrame) -> str:
         """Create basic context about the DataFrame for LLM."""
-        context_parts: list[str] = []
-
-        context_parts.append(f"Dataset with {len(df)} rows and {len(df.columns)} columns")
-
-        context_parts.append("Columns:")
-        for col in df.columns:
-            col_type = "numeric" if pd.api.types.is_numeric_dtype(df[col]) else "categorical"
-            unique_count = df[col].nunique()
-            context_parts.append(f"- {col} ({col_type}, {unique_count} unique values)")
-
-        context_parts.append("\nSample data:")
-        sample = df.head(3)
-        for _, row in sample.iterrows():
-            row_desc = ", ".join([f"{col}: {val}" for col, val in row.items()][:5])
-            context_parts.append(f"- {row_desc}")
-
-        numeric_cols = df.select_dtypes(include=["number"]).columns
-        if len(numeric_cols) > 0:
-            context_parts.append("\nNumeric column ranges:")
-            for col in numeric_cols[:3]:
-                min_val, max_val = df[col].min(), df[col].max()
-                context_parts.append(f"- {col}: {min_val} to {max_val}")
-
-        return "\n".join(context_parts)
+        return f"## Schema\n{build_schema_card(df)}"
 
     def _calculate_structured_confidence(self, question: str, result: QueryResult) -> float:
         """Calculate confidence score for structured query results."""

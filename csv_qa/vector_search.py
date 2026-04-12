@@ -76,8 +76,19 @@ class VectorSearchEngine:
             logger.error("Error in build_vector_index: %s", e, exc_info=True)
             raise VectorSearchError(detail=str(e)) from e
 
-    def retrieve_context(self, question: str, top_k: int = 3) -> str:
-        """Retrieve the most relevant context for a question.
+    def retrieve_context(
+        self,
+        question: str,
+        top_k: int = 3,
+        min_score: float = 0.15,
+        char_budget: int = 1500,
+    ) -> str:
+        """Retrieve relevant context for a question.
+
+        Filters below min_score to drop noise, dedupes identical chunks,
+        and caps total size at char_budget. Most relevant chunk is placed
+        LAST so it sits closest to the question in the final prompt
+        (mitigates lost-in-the-middle).
 
         Raises:
             VectorSearchError: If retrieval fails unexpectedly.
@@ -88,14 +99,45 @@ class VectorSearchEngine:
         try:
             question_vector = self.vectorizer.transform([question])
             similarities = cosine_similarity(question_vector, self.vectors)[0]
-            top_indices = np.argsort(similarities)[-top_k:][::-1]
+            ranked_indices = np.argsort(similarities)[::-1]
 
-            context = "\n\n".join([self.chunk_list[i] for i in top_indices])
+            seen: set[str] = set()
+            selected: list[tuple[int, float]] = []
+            total_chars = 0
 
-            logger.debug("Retrieved %d chunks as context", top_k)
+            for idx in ranked_indices:
+                if len(selected) >= top_k:
+                    break
+                score = float(similarities[idx])
+                if score < min_score:
+                    break
+                chunk = self.chunk_list[idx]
+                key = hashlib.md5(chunk.encode()).hexdigest()
+                if key in seen:
+                    continue
+                added = len(chunk) + (2 if selected else 0)
+                if total_chars + added > char_budget:
+                    break
+                seen.add(key)
+                selected.append((idx, score))
+                total_chars += added
+
+            if not selected:
+                logger.debug(
+                    "No chunks passed min_score=%.2f (best=%.3f)",
+                    min_score,
+                    float(similarities[ranked_indices[0]]) if len(ranked_indices) else 0.0,
+                )
+                return ""
+
+            ordered = list(reversed(selected))
+            context = "\n\n".join(self.chunk_list[i] for i, _ in ordered)
+
             logger.debug(
-                "Top similarity scores: %s",
-                [similarities[i] for i in top_indices],
+                "Retrieved %d chunks (%d chars) scores=%s",
+                len(ordered),
+                total_chars,
+                [round(s, 3) for _, s in ordered],
             )
 
             return context

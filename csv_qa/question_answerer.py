@@ -101,6 +101,23 @@ class CSVQuestionAnswerer:
 
         return self.data_handler.get_columns()
 
+    def _build_llm_context(self, retrieved: str) -> str:
+        """Prepend the cached schema card to retrieved context.
+
+        Gives the LLM a stable data anchor (column types, ranges, example
+        row) in addition to whatever rows were retrieved for this question.
+        """
+        if not self.data_handler.is_loaded():
+            return retrieved
+        try:
+            card = self.data_handler.get_schema_card()
+        except Exception as e:
+            logger.debug("Could not build schema card: %s", e)
+            return retrieved
+        if not retrieved:
+            return f"## Schema\n{card}"
+        return f"## Schema\n{card}\n\n## Retrieved rows\n{retrieved}"
+
     def format_matches(self, matches, target_column=None, id_column=None, id_value=None):
         """Format matching rows into a readable answer.
 
@@ -278,7 +295,9 @@ class CSVQuestionAnswerer:
 
                 if context:
                     try:
-                        response = self.ollama_client.ask(context, question)
+                        response = self.ollama_client.ask(
+                            self._build_llm_context(context), question
+                        )
                     except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                         logger.error("Ollama error during semantic search: %s", e, exc_info=True)
                         return None
@@ -670,7 +689,9 @@ class CSVQuestionAnswerer:
                 # We already tried direct lookup and failed, so use the context
                 if context:
                     try:
-                        return self.ollama_client.ask(context, question)
+                        return self.ollama_client.ask(
+                            self._build_llm_context(context), question
+                        )
                     except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                         logger.error("Ollama error during context lookup: %s", e, exc_info=True)
                         return f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
@@ -681,7 +702,9 @@ class CSVQuestionAnswerer:
 
             # Ask the LLM with the context we found
             try:
-                result = self.ollama_client.ask(context, question)
+                result = self.ollama_client.ask(
+                    self._build_llm_context(context), question
+                )
             except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                 logger.error("Ollama error during question answering: %s", e, exc_info=True)
                 result = f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
@@ -935,61 +958,10 @@ class CSVQuestionAnswerer:
         if not self.data_handler.is_loaded():
             return {"error": "CSV data not loaded"}
 
-        # Get sample data for context
         df = self.data_handler.get_dataframe()
         sample_data = df.head(3).to_string(index=False)
         columns = self.data_handler.get_columns()
 
-        # Create a prompt for the LLM to break down the query
-        prompt = f"""You are a CSV data query planner. Break down this complex query into steps.
-
-        CSV columns: {', '.join(columns)}
-
-        Sample data (first few rows):
-        {sample_data}
-
-        User query: "{question}"
-
-        Break this query into sequential steps. For example, if the query is "analysis all records are festival",
-        the steps would be:
-        1. Filter records containing the keyword "festival"
-        2. Perform statistical analysis on the filtered records
-
-        Return a JSON object with the following structure:
-        {{
-          "steps": [
-            {{
-              "operation": "filter",
-              "type": "keyword_search",
-              "keyword": "festival",
-              "description": "Find records containing festival"
-            }},
-            {{
-              "operation": "analyze",
-              "type": "statistical",
-              "target": "filtered_results",
-              "description": "Perform statistical analysis on filtered records"
-            }}
-          ],
-          "description": "Filter records containing 'festival' and then analyze them"
-        }}
-
-        Only include fields that are relevant to each step. Format as valid JSON with no comments.
-        """
-
-        logger.debug("Breaking down complex query with LLM...")
-
-        # Send the request to the Ollama API
-        try:
-            response = self.ollama_client.ask(prompt, question)
-        except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
-            logger.error("Ollama error while parsing query steps: %s", e, exc_info=True)
-            return self._create_default_query_plan(question)
-
-        logger.debug("LLM Response: %s", response)
-
-        # For specific common cases, provide hardcoded plans
-        # This ensures the feature works even if the LLM response is problematic
         question_lower = question.lower().strip()
 
         if question_lower == "analysis all records are festival":
@@ -1029,47 +1001,24 @@ class CSVQuestionAnswerer:
                 "description": "Filter records NOT containing 'festival' and then analyze them"
             }
 
-        # Extract JSON from the response using multiple approaches
+        logger.debug("Breaking down complex query with LLM...")
+
         try:
-            # First try to find JSON between triple backticks
-            json_match = re.search(r'```json\s*([\s\S]*?)```', response)
-            if json_match:
-                json_str = json_match.group(1).strip()
-            else:
-                # Try to find JSON between curly braces
-                json_match = re.search(r'\{[\s\S]*?\}', response)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    logger.warning("No JSON found in LLM response")
-                    # Fallback to a default query plan
-                    return self._create_default_query_plan(question)
-
-            # Clean up the JSON string (remove comments, fix common issues)
-            # Remove single-line comments
-            json_str = re.sub(r'//.*?\n', '\n', json_str)
-            # Remove multi-line comments
-            json_str = re.sub(r'/\*.*?\*/', '', json_str, flags=re.DOTALL)
-
-            # Try to parse the JSON
-            query_plan = json.loads(json_str)
-
-            # Validate the query plan structure
-            if "steps" not in query_plan or not isinstance(query_plan["steps"], list) or not query_plan["steps"]:
-                logger.warning("Invalid query plan structure")
-                return self._create_default_query_plan(question)
-
-            logger.debug("Query plan: %s", json.dumps(query_plan, indent=2))
-
-            return query_plan
-
-        except json.JSONDecodeError as e:
-            logger.warning("Failed to parse JSON from LLM response: %s", e)
+            query_plan = self.ollama_client.parse_query_steps(
+                question=question,
+                columns=columns,
+                sample_data=sample_data,
+            )
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+            logger.error("Ollama error while parsing query steps: %s", e, exc_info=True)
             return self._create_default_query_plan(question)
 
-        except Exception as e:
-            logger.error("Error parsing query steps: %s", e, exc_info=True)
+        if query_plan is None:
+            logger.warning("LLM did not return a valid query plan; using default")
             return self._create_default_query_plan(question)
+
+        logger.debug("Query plan: %s", json.dumps(query_plan, indent=2))
+        return query_plan
 
     def _create_default_query_plan(self, question: str) -> dict:
         """Create a default query plan when LLM parsing fails.
