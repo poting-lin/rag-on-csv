@@ -6,9 +6,47 @@ import logging
 
 import pandas as pd
 
-from .exceptions import DataLoadError
+from csv_qa.exceptions import DataLoadError
 
 logger = logging.getLogger(__name__)
+
+
+def build_schema_card(df: pd.DataFrame, max_categorical_values: int = 5) -> str:
+    """Build a compact schema card describing the DataFrame.
+
+    Produces one line per column with type, cardinality, and either a
+    numeric range or the most common categorical values. Includes a
+    single example row. Intended to be prepended to LLM contexts so the
+    model has a stable anchor to the dataset shape without re-shipping
+    raw rows on every call.
+    """
+    lines: list[str] = [f"Dataset: {len(df)} rows, {len(df.columns)} columns"]
+    lines.append("Columns:")
+
+    for col in df.columns:
+        series = df[col]
+        unique_count = series.nunique(dropna=True)
+        if pd.api.types.is_numeric_dtype(series):
+            col_type = "numeric"
+            if unique_count > 0:
+                detail = f"range {series.min()}..{series.max()}"
+            else:
+                detail = "empty"
+        else:
+            col_type = "categorical"
+            top_values = series.dropna().astype(str).value_counts().head(max_categorical_values)
+            if len(top_values) > 0:
+                detail = "top=[" + ", ".join(top_values.index.tolist()) + "]"
+            else:
+                detail = "empty"
+        lines.append(f"- {col} ({col_type}, {unique_count} unique, {detail})")
+
+    if len(df) > 0:
+        example = df.iloc[0]
+        example_parts = [f"{col}={example[col]}" for col in df.columns]
+        lines.append("Example row: " + " | ".join(example_parts))
+
+    return "\n".join(lines)
 
 
 class CSVDataHandler:
@@ -20,6 +58,7 @@ class CSVDataHandler:
         self.csv_columns: list[str] = []
         self.current_csv_path: str | None = None
         self._cache_clear_callbacks: list = []
+        self._schema_card: str | None = None
 
     def add_cache_clear_callback(self, callback) -> None:
         """Add a callback function to be called when cache should be cleared."""
@@ -53,6 +92,7 @@ class CSVDataHandler:
             self.csv_dataframe = pd.read_csv(csv_path)
             self.csv_columns = list(self.csv_dataframe.columns)
             self.current_csv_path = csv_path
+            self._schema_card = None
 
             logger.debug("Loaded CSV with columns: %s", self.csv_columns)
 
@@ -71,6 +111,17 @@ class CSVDataHandler:
     def is_loaded(self) -> bool:
         """Check if CSV data is loaded."""
         return self.csv_dataframe is not None
+
+    def get_schema_card(self, max_categorical_values: int = 5) -> str:
+        """Return a cached schema card for the loaded CSV."""
+        if self.csv_dataframe is None:
+            raise ValueError("CSV not loaded. Call load_csv first.")
+
+        if self._schema_card is not None:
+            return self._schema_card
+
+        self._schema_card = build_schema_card(self.csv_dataframe, max_categorical_values)
+        return self._schema_card
 
     def create_chunks(self) -> list[str]:
         """Create descriptive text chunks for each row in the CSV."""

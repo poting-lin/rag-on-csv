@@ -13,8 +13,9 @@ import numpy as np
 import pandas as pd
 import requests
 
-from .config import DEFAULT_EMBED_MODEL
-from .exceptions import OllamaConnectionError
+from csv_qa.config import DEFAULT_EMBED_MODEL
+from csv_qa.exceptions import OllamaConnectionError
+from csv_qa.ollama_client import _with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -39,24 +40,29 @@ class OllamaEmbedder:
         return result
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts via the Ollama API.
+        """Embed a batch of texts via the Ollama API, with retry on transient failures.
 
         Raises:
             OllamaConnectionError: If Ollama is unreachable or returns an error.
         """
-        try:
-            response = requests.post(
+        def _post() -> requests.Response:
+            return requests.post(
                 self.embed_url,
                 json={"model": self.model_name, "input": texts},
                 timeout=120,
             )
-        except requests.exceptions.ConnectionError as e:
-            raise OllamaConnectionError(detail=str(e)) from e
-        except requests.exceptions.RequestException as e:
+
+        try:
+            response = _with_retry(_post)
+        except OllamaConnectionError:
+            raise
+        except Exception as e:
             raise OllamaConnectionError(detail=str(e)) from e
 
         if response.status_code == 404:
-            raise OllamaConnectionError(detail=f"Model '{self.model_name}' not available. Pull it via the sidebar.")
+            raise OllamaConnectionError(
+                detail=f"Model '{self.model_name}' not available. Pull it via the sidebar."
+            )
         if response.status_code != 200:
             raise OllamaConnectionError(detail=f"HTTP {response.status_code}: {response.text}")
 
@@ -217,24 +223,47 @@ class SemanticSearch:
         embeddings = self._embedder.embed(texts)
         self._vectors = np.array(embeddings)
 
-    def search(self, query: str, top_k: int = 5) -> list[Chunk]:
+    def search(self, query: str, top_k: int = 5, min_score: float = 0.3) -> list[Chunk]:
         """Search for chunks most similar to the query.
 
-        Returns an empty list if no index has been built.
+        Drops chunks below min_score to avoid polluting the LLM context with
+        irrelevant rows, and dedupes by chunk text hash. Returns chunks
+        sorted by similarity (highest first), or an empty list if no index
+        has been built or nothing clears the threshold.
         """
         if self._chunks is None or self._vectors is None:
             return []
 
         query_vec = np.array(self._embedder.embed_single(query))
 
-        # cosine similarity
         norms = np.linalg.norm(self._vectors, axis=1) * np.linalg.norm(query_vec)
-        # avoid division by zero
         norms = np.where(norms == 0, 1e-10, norms)
         similarities = self._vectors @ query_vec / norms
 
-        top_indices = np.argsort(similarities)[::-1][:top_k]
-        return [self._chunks[i] for i in top_indices]
+        ranked = np.argsort(similarities)[::-1]
+
+        seen: set[str] = set()
+        results: list[Chunk] = []
+        for idx in ranked:
+            if len(results) >= top_k:
+                break
+            score = float(similarities[idx])
+            if score < min_score:
+                break
+            chunk = self._chunks[idx]
+            key = hashlib.md5(chunk.text.encode()).hexdigest()
+            if key in seen:
+                continue
+            seen.add(key)
+            results.append(chunk)
+
+        if not results:
+            logger.debug(
+                "No chunks passed min_score=%.2f (best=%.3f)",
+                min_score,
+                float(similarities[ranked[0]]) if len(ranked) else 0.0,
+            )
+        return results
 
     def clear(self) -> None:
         """Reset the index and clear the embedding cache."""

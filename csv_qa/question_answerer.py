@@ -3,25 +3,30 @@ CSV Question Answerer module - main class that orchestrates the question answeri
 """
 
 import logging
+import os
 import re
 import json
+from collections import OrderedDict
 import pandas as pd
-from .data_handler import CSVDataHandler
-from .fuzzy_matcher import FuzzyMatcher
-from .question_parser import QuestionParser
-from .semantic_search import SemanticSearch
-from .ollama_client import OllamaAPIClient
-from .context_memory import ConversationContext
-from .question_router import QuestionRouter
-from .structured_query_engine import StructuredQueryEngine
-from .hybrid_engine import HybridCSVEngine
-from .exceptions import (
+from csv_qa.data_handler import CSVDataHandler
+from csv_qa.fuzzy_matcher import FuzzyMatcher
+from csv_qa.question_parser import QuestionParser
+from csv_qa.semantic_search import SemanticSearch
+from csv_qa.ollama_client import OllamaAPIClient
+from csv_qa.context_memory import ConversationContext
+from csv_qa.question_router import QuestionRouter
+from csv_qa.structured_query_engine import StructuredQueryEngine
+from csv_qa.hybrid_engine import HybridCSVEngine
+from csv_qa.exceptions import (
     OllamaConnectionError,
     OllamaTimeoutError,
     OllamaResponseError,
 )
 
 logger = logging.getLogger(__name__)
+
+
+RESPONSE_CACHE_MAX_SIZE = 100
 
 
 class CSVQuestionAnswerer:
@@ -64,8 +69,12 @@ class CSVQuestionAnswerer:
         self.ollama_client = OllamaAPIClient(model_name=model_name)
         self.question_parser = None  # Will be initialized after loading CSV
 
+        # Response cache: (question_lower, csv_path, mtime, model_name) -> answer
+        self._response_cache: OrderedDict = OrderedDict()
+
         # Register cache clearing callback with data handler
         self.data_handler.add_cache_clear_callback(self.semantic_search.clear)
+        self.data_handler.add_cache_clear_callback(self._response_cache.clear)
 
         if self.use_enhanced_engines:
             self.data_handler.add_cache_clear_callback(self.hybrid_engine.clear_cache)
@@ -96,6 +105,94 @@ class CSVQuestionAnswerer:
         logger.debug("CSV loaded, semantic search index will be built on first query")
 
         return self.data_handler.get_columns()
+
+    def check_for_quick_suggestions(
+        self, question: str, csv_path: str | None = None
+    ) -> tuple[str, list[str]] | None:
+        """Fast local typo check before streaming.
+
+        Mirrors the fuzzy-match branch in _get_answer_original so the
+        streaming UI can surface suggestions without running the full
+        LLM pipeline. Returns (message, suggestions) on hit, or None if
+        the question should fall through to normal answering.
+        """
+        if csv_path and not self.data_handler.is_loaded():
+            self.load_csv(csv_path)
+        df = self.data_handler.get_dataframe()
+        if df is None:
+            return None
+
+        search_term = question.lower().strip()
+        if len(search_term) >= 10:
+            return None
+
+        if any(search_term in str(row).lower() for _, row in df.iterrows()):
+            return None
+
+        similar_values = self.fuzzy_matcher.find_similar_values(search_term, df)
+        if not similar_values:
+            return None
+
+        if len(similar_values) == 1:
+            message = (
+                f"I couldn't find '{question.strip()}' in the CSV data. "
+                f"Did you mean '{similar_values[0]}'? If yes, please ask about that instead."
+            )
+            return message, [similar_values[0]]
+
+        suggestions_str = ", ".join(f"'{v}'" for v in similar_values[:3])
+        message = (
+            f"I couldn't find '{question.strip()}' in the CSV data. "
+            f"Did you mean one of these: {suggestions_str}? "
+            "If yes, please ask about that instead."
+        )
+        return message, similar_values[:3]
+
+    def answer_question_stream(self, question: str, csv_path: str | None = None):
+        """Yield answer tokens for a question, streaming from the LLM.
+
+        Uses the semantic search path end-to-end so the LLM's generation
+        can be streamed. Structured or direct-lookup answers should be
+        obtained via the non-streaming answer_question().
+
+        Yields:
+            Strings (token chunks). Network/LLM errors propagate as the
+            usual OllamaConnectionError / OllamaTimeoutError / OllamaResponseError
+            so the caller can distinguish them.
+        """
+        if csv_path and not self.data_handler.is_loaded():
+            self.load_csv(csv_path)
+        if not self.data_handler.is_loaded():
+            yield "CSV not loaded."
+            return
+
+        df = self.data_handler.get_dataframe()
+        self.semantic_search.index(df)
+        chunks = self.semantic_search.search(question, top_k=5)
+        if not chunks:
+            yield "I couldn't find any matching information in the CSV data."
+            return
+
+        retrieved = "\n\n".join(c.text for c in reversed(chunks))
+        context = self._build_llm_context(retrieved)
+        yield from self.ollama_client.ask_stream(context, question)
+
+    def _build_llm_context(self, retrieved: str) -> str:
+        """Prepend the cached schema card to retrieved context.
+
+        Gives the LLM a stable data anchor (column types, ranges, example
+        row) in addition to whatever rows were retrieved for this question.
+        """
+        if not self.data_handler.is_loaded():
+            return retrieved
+        try:
+            card = self.data_handler.get_schema_card()
+        except Exception as e:
+            logger.debug("Could not build schema card: %s", e)
+            return retrieved
+        if not retrieved:
+            return f"## Schema\n{card}"
+        return f"## Schema\n{card}\n\n## Retrieved rows\n{retrieved}"
 
     def format_matches(self, matches, target_column=None, id_column=None, id_value=None):
         """Format matching rows into a readable answer.
@@ -163,6 +260,13 @@ class CSVQuestionAnswerer:
 
         logger.info("Question received: %s", question)
 
+        cache_key = self._cache_key(question, csv_path)
+        if cache_key is not None and cache_key in self._response_cache:
+            self._response_cache.move_to_end(cache_key)
+            cached = self._response_cache[cache_key]
+            logger.info("Response cache hit")
+            return cached
+
         # Reset conversation storage flag
         self._conversation_stored = False
 
@@ -210,7 +314,34 @@ class CSVQuestionAnswerer:
         else:
             logger.info("Response status: ok, preview: %s", str(answer)[:200])
 
+        if cache_key is not None and not isinstance(answer, tuple):
+            self._cache_response(cache_key, answer)
+
         return answer
+
+    def _cache_key(self, question: str, csv_path: str | None) -> tuple | None:
+        """Build a cache key, or return None if caching should be skipped.
+
+        Caching is skipped when context memory is active (stateful answers)
+        or the CSV path is unknown (cannot detect file changes).
+        """
+        if self.enable_context_memory and self.context_memory:
+            return None
+        path = csv_path or self.data_handler.current_csv_path
+        if not path:
+            return None
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            return None
+        return (question.strip().lower(), path, mtime, self.model_name)
+
+    def _cache_response(self, key: tuple, answer) -> None:
+        """Insert an answer into the LRU cache, evicting oldest if full."""
+        self._response_cache[key] = answer
+        self._response_cache.move_to_end(key)
+        while len(self._response_cache) > RESPONSE_CACHE_MAX_SIZE:
+            self._response_cache.popitem(last=False)
 
     def _get_answer_internal(self, question: str, csv_path: str | None = None, context_info=None) -> str | tuple:
         """Internal method to get answer with enhanced multi-engine approach."""
@@ -234,8 +365,8 @@ class CSVQuestionAnswerer:
             if not chunks:
                 logger.debug("No relevant chunks found for question")
                 return None
-            context = "\n\n".join(c.text for c in chunks)
-            return self.ollama_client.ask(context, question)
+            retrieved = "\n\n".join(c.text for c in reversed(chunks))
+            return self.ollama_client.ask(self._build_llm_context(retrieved), question)
         except OllamaConnectionError as e:
             logger.error("Embedding model error: %s", e)
             return None
@@ -649,7 +780,9 @@ class CSVQuestionAnswerer:
                 # We already tried direct lookup and failed, so use the context
                 if context:
                     try:
-                        return self.ollama_client.ask(context, question)
+                        return self.ollama_client.ask(
+                            self._build_llm_context(context), question
+                        )
                     except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                         logger.error("Ollama error during context lookup: %s", e, exc_info=True)
                         return (
@@ -667,7 +800,9 @@ class CSVQuestionAnswerer:
 
             # Ask the LLM with the context we found
             try:
-                result = self.ollama_client.ask(context, question)
+                result = self.ollama_client.ask(
+                    self._build_llm_context(context), question
+                )
             except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                 logger.error("Ollama error during question answering: %s", e, exc_info=True)
                 result = (
@@ -932,61 +1067,10 @@ class CSVQuestionAnswerer:
         if not self.data_handler.is_loaded():
             return {"error": "CSV data not loaded"}
 
-        # Get sample data for context
         df = self.data_handler.get_dataframe()
         sample_data = df.head(3).to_string(index=False)
         columns = self.data_handler.get_columns()
 
-        # Create a prompt for the LLM to break down the query
-        prompt = f"""You are a CSV data query planner. Break down this complex query into steps.
-
-        CSV columns: {", ".join(columns)}
-
-        Sample data (first few rows):
-        {sample_data}
-
-        User query: "{question}"
-
-        Break this query into sequential steps. For example, if the query is "analysis all records are festival",
-        the steps would be:
-        1. Filter records containing the keyword "festival"
-        2. Perform statistical analysis on the filtered records
-
-        Return a JSON object with the following structure:
-        {{
-          "steps": [
-            {{
-              "operation": "filter",
-              "type": "keyword_search",
-              "keyword": "festival",
-              "description": "Find records containing festival"
-            }},
-            {{
-              "operation": "analyze",
-              "type": "statistical",
-              "target": "filtered_results",
-              "description": "Perform statistical analysis on filtered records"
-            }}
-          ],
-          "description": "Filter records containing 'festival' and then analyze them"
-        }}
-
-        Only include fields that are relevant to each step. Format as valid JSON with no comments.
-        """
-
-        logger.debug("Breaking down complex query with LLM...")
-
-        # Send the request to the Ollama API
-        try:
-            response = self.ollama_client.ask(prompt, question)
-        except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
-            logger.error("Ollama error while parsing query steps: %s", e, exc_info=True)
-            return self._create_default_query_plan(question)
-
-        logger.debug("LLM Response: %s", response)
-
-        # For specific common cases, provide hardcoded plans
-        # This ensures the feature works even if the LLM response is problematic
         question_lower = question.lower().strip()
 
         if question_lower == "analysis all records are festival":
@@ -1026,47 +1110,24 @@ class CSVQuestionAnswerer:
                 "description": "Filter records NOT containing 'festival' and then analyze them",
             }
 
-        # Extract JSON from the response using multiple approaches
+        logger.debug("Breaking down complex query with LLM...")
+
         try:
-            # First try to find JSON between triple backticks
-            json_match = re.search(r"```json\s*([\s\S]*?)```", response)
-            if json_match:
-                json_str = json_match.group(1).strip()
-            else:
-                # Try to find JSON between curly braces
-                json_match = re.search(r"\{[\s\S]*?\}", response)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    logger.warning("No JSON found in LLM response")
-                    # Fallback to a default query plan
-                    return self._create_default_query_plan(question)
-
-            # Clean up the JSON string (remove comments, fix common issues)
-            # Remove single-line comments
-            json_str = re.sub(r"//.*?\n", "\n", json_str)
-            # Remove multi-line comments
-            json_str = re.sub(r"/\*.*?\*/", "", json_str, flags=re.DOTALL)
-
-            # Try to parse the JSON
-            query_plan = json.loads(json_str)
-
-            # Validate the query plan structure
-            if "steps" not in query_plan or not isinstance(query_plan["steps"], list) or not query_plan["steps"]:
-                logger.warning("Invalid query plan structure")
-                return self._create_default_query_plan(question)
-
-            logger.debug("Query plan: %s", json.dumps(query_plan, indent=2))
-
-            return query_plan
-
-        except json.JSONDecodeError as e:
-            logger.warning("Failed to parse JSON from LLM response: %s", e)
+            query_plan = self.ollama_client.parse_query_steps(
+                question=question,
+                columns=columns,
+                sample_data=sample_data,
+            )
+        except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
+            logger.error("Ollama error while parsing query steps: %s", e, exc_info=True)
             return self._create_default_query_plan(question)
 
-        except Exception as e:
-            logger.error("Error parsing query steps: %s", e, exc_info=True)
+        if query_plan is None:
+            logger.warning("LLM did not return a valid query plan; using default")
             return self._create_default_query_plan(question)
+
+        logger.debug("Query plan: %s", json.dumps(query_plan, indent=2))
+        return query_plan
 
     def _create_default_query_plan(self, question: str) -> dict:
         """Create a default query plan when LLM parsing fails.
