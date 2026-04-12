@@ -1,6 +1,7 @@
 """
 CSV Question Answerer module - main class that orchestrates the question answering process.
 """
+
 import logging
 import re
 import json
@@ -8,12 +9,11 @@ import pandas as pd
 from .data_handler import CSVDataHandler
 from .fuzzy_matcher import FuzzyMatcher
 from .question_parser import QuestionParser
-from .vector_search import VectorSearchEngine
+from .semantic_search import SemanticSearch
 from .ollama_client import OllamaAPIClient
 from .context_memory import ConversationContext
 from .question_router import QuestionRouter
 from .structured_query_engine import StructuredQueryEngine
-from .enhanced_vector_search import CSVAwareVectorSearch
 from .hybrid_engine import HybridCSVEngine
 from .exceptions import (
     OllamaConnectionError,
@@ -30,6 +30,7 @@ class CSVQuestionAnswerer:
     def __init__(
         self,
         model_name: str = "llama3.2:1b",
+        embed_model: str | None = None,
         enable_context_memory: bool = True,
         use_enhanced_engines: bool = True,
     ) -> None:
@@ -37,6 +38,7 @@ class CSVQuestionAnswerer:
 
         Args:
             model_name: Name of the Ollama model to use.
+            embed_model: Name of the embedding model for semantic search.
             enable_context_memory: Whether to enable conversation context memory.
             use_enhanced_engines: Whether to use enhanced multi-engine approach.
         """
@@ -55,23 +57,18 @@ class CSVQuestionAnswerer:
         if self.use_enhanced_engines:
             self.question_router = QuestionRouter()
             self.structured_engine = StructuredQueryEngine()
-            self.enhanced_vector_search = CSVAwareVectorSearch()
             self.hybrid_engine = HybridCSVEngine(model_name=model_name)
 
-        # Keep original engines for fallback
-        self.vector_search = VectorSearchEngine()
+        # Semantic search replaces both vector search and enhanced vector search
+        self.semantic_search = SemanticSearch(embed_model=embed_model)
         self.ollama_client = OllamaAPIClient(model_name=model_name)
         self.question_parser = None  # Will be initialized after loading CSV
 
         # Register cache clearing callback with data handler
-        self.data_handler.add_cache_clear_callback(
-            self.vector_search.clear_cache)
+        self.data_handler.add_cache_clear_callback(self.semantic_search.clear)
 
         if self.use_enhanced_engines:
-            self.data_handler.add_cache_clear_callback(
-                self.enhanced_vector_search.clear_cache)
-            self.data_handler.add_cache_clear_callback(
-                self.hybrid_engine.clear_cache)
+            self.data_handler.add_cache_clear_callback(self.hybrid_engine.clear_cache)
 
         # Initialize context memory
         if self.enable_context_memory:
@@ -96,8 +93,7 @@ class CSVQuestionAnswerer:
             csv_columns=self.data_handler.get_columns(),
         )
 
-        cache_info = self.vector_search.get_cache_info()
-        logger.debug("Vector cache info after loading CSV: %s", cache_info)
+        logger.debug("CSV loaded, semantic search index will be built on first query")
 
         return self.data_handler.get_columns()
 
@@ -182,6 +178,8 @@ class CSVQuestionAnswerer:
         if not question:
             return "Please ask a question."
 
+        logger.info("Question received: %s", question)
+
         # Reset conversation storage flag
         self._conversation_stored = False
 
@@ -191,50 +189,76 @@ class CSVQuestionAnswerer:
 
         if self.enable_context_memory and self.context_memory:
             # Detect if this is a follow-up question
-            context_info = self.context_memory.detect_follow_up_intent(
-                question)
+            context_info = self.context_memory.detect_follow_up_intent(question)
 
-            if context_info['is_follow_up']:
+            if context_info["is_follow_up"]:
                 logger.debug(
                     "Detected follow-up question: %s",
-                    context_info['reference_type'],
+                    context_info["reference_type"],
                 )
 
                 # Enhance the question with context
-                if context_info['reference_type'] == 'pronoun':
+                if context_info["reference_type"] == "pronoun":
                     # For pronoun references, add context to help resolve them
                     context_enhanced_question = self._resolve_pronouns_with_context(
-                        question, context_info['referenced_turns']
+                        question, context_info["referenced_turns"]
                     )
-                elif context_info['reference_type'] == 'continuation':
+                elif context_info["reference_type"] == "continuation":
                     # For continuation, the original question is fine but we'll use context in LLM
                     pass
 
         # Get the answer using the potentially enhanced question
-        answer = self._get_answer_internal(
-            context_enhanced_question, csv_path, context_info)
+        answer = self._get_answer_internal(context_enhanced_question, csv_path, context_info)
 
         # Store this interaction in context memory only if not already stored
-        should_store = (self.enable_context_memory and self.context_memory and
-                        not isinstance(answer, tuple) and not self._conversation_stored)
+        should_store = (
+            self.enable_context_memory
+            and self.context_memory
+            and not isinstance(answer, tuple)
+            and not self._conversation_stored
+        )
         if should_store:
             self._store_conversation_turn(question, answer, context_info)
 
+        # Log response status and content preview
+        if isinstance(answer, tuple):
+            answer_text, _, is_suggestion = answer
+            logger.info("Response status: suggestion, preview: %s", str(answer_text)[:200])
+        else:
+            logger.info("Response status: ok, preview: %s", str(answer)[:200])
+
         return answer
 
-    def _get_answer_internal(self, question: str, csv_path: str | None = None,
-                             context_info=None) -> str | tuple:
+    def _get_answer_internal(self, question: str, csv_path: str | None = None, context_info=None) -> str | tuple:
         """Internal method to get answer with enhanced multi-engine approach."""
 
         # Use enhanced engines if available
         if self.use_enhanced_engines and self.data_handler.get_dataframe() is not None:
-            enhanced_result = self._get_answer_with_enhanced_engines(
-                question, context_info)
+            logger.info("Trying enhanced engines")
+            enhanced_result = self._get_answer_with_enhanced_engines(question, context_info)
             if enhanced_result:
                 return enhanced_result
 
         # Fall back to original implementation
+        logger.info("Enhanced engines returned no result, falling back to original engine")
         return self._get_answer_original(question, csv_path, context_info)
+
+    def _answer_via_semantic_search(self, question: str, df: pd.DataFrame) -> str | None:
+        """Answer a question using semantic search over the DataFrame."""
+        try:
+            self.semantic_search.index(df)
+            chunks = self.semantic_search.search(question, top_k=5)
+            if not chunks:
+                logger.debug("No relevant chunks found for question")
+                return None
+            retrieved = "\n\n".join(c.text for c in reversed(chunks))
+            return self.ollama_client.ask(self._build_llm_context(retrieved), question)
+        except OllamaConnectionError as e:
+            logger.error("Embedding model error: %s", e)
+            return None
+        except (OllamaTimeoutError, OllamaResponseError) as e:
+            logger.error("Ollama error during semantic search: %s", e, exc_info=True)
+            return None
 
     def _get_answer_with_enhanced_engines(self, question: str, context_info=None):
         """Get answer using the enhanced multi-engine approach."""
@@ -246,93 +270,66 @@ class CSVQuestionAnswerer:
             # Apply context filter if needed
             filtered_df = df
             if self.enable_context_memory and self.context_memory and context_info:
-                context_filter = self.context_memory.get_context_data_filter(
-                    question)
-                if context_filter and 'filter_column' in context_filter:
-                    filtered_result = self._apply_context_filter(
-                        context_filter)
+                context_filter = self.context_memory.get_context_data_filter(question)
+                if context_filter and "filter_column" in context_filter:
+                    filtered_result = self._apply_context_filter(context_filter)
                     if filtered_result is not None:
                         filtered_df = filtered_result
-                        logger.debug(
-                            "Applied context filter: %d records", len(filtered_df))
+                        logger.debug("Applied context filter: %d records", len(filtered_df))
 
             # Route the question to the appropriate engine
             columns = self.data_handler.get_columns()
-            engine_type = self.question_router.route_question(
-                question, columns)
+            engine_type = self.question_router.route_question(question, columns)
 
-            logger.debug("Question routed to: %s", engine_type)
+            logger.info("Question routed to engine: %s", engine_type)
 
             # Handle different engine types
-            if engine_type == 'structured':
-                result = self.structured_engine.execute_query(
-                    question, filtered_df)
+            if engine_type == "structured":
+                result = self.structured_engine.execute_query(question, filtered_df)
                 if result.success:
                     # Store result data for context memory
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
-                        result_count = self._count_results_in_answer(
-                            result.data)
+                        result_count = self._count_results_in_answer(result.data)
                         extracted_result_data = None
                         if result_count > 0:
-                            extracted_result_data = self._extract_filter_info_from_question(
-                                question, result_count)
+                            extracted_result_data = self._extract_filter_info_from_question(question, result_count)
 
                         self._store_conversation_turn(
-                            question, result.data, context_info,
-                            result_data=extracted_result_data
+                            question, result.data, context_info, result_data=extracted_result_data
                         )
                         self._conversation_stored = True
                     return result.data
 
-            elif engine_type == 'semantic':
-                # Use enhanced vector search
-                chunks = self.enhanced_vector_search.create_structured_chunks(
-                    filtered_df)
-                self.enhanced_vector_search.build_vector_index(chunks)
-                context = self.enhanced_vector_search.retrieve_context(
-                    question)
+            elif engine_type == "semantic":
+                response = self._answer_via_semantic_search(question, filtered_df)
 
-                if context:
-                    try:
-                        response = self.ollama_client.ask(
-                            self._build_llm_context(context), question
-                        )
-                    except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
-                        logger.error("Ollama error during semantic search: %s", e, exc_info=True)
-                        return None
-
+                if response:
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
                         result_count = self._count_results_in_answer(response)
                         extracted_result_data = None
                         if result_count > 0:
-                            extracted_result_data = self._extract_filter_info_from_question(
-                                question, result_count)
+                            extracted_result_data = self._extract_filter_info_from_question(question, result_count)
 
                         self._store_conversation_turn(
-                            question, response, context_info,
-                            result_data=extracted_result_data
+                            question, response, context_info, result_data=extracted_result_data
                         )
                         self._conversation_stored = True
                     return response
 
-            elif engine_type == 'hybrid':
-                result = self.hybrid_engine.answer_question(
-                    question, filtered_df)
+            elif engine_type == "hybrid":
+                result = self.hybrid_engine.answer_question(question, filtered_df)
                 if result.success:
                     if self.enable_context_memory and self.context_memory:
                         # Extract filter info from question for context memory
-                        result_count = self._count_results_in_answer(
-                            result.data)
+                        result_count = self._count_results_in_answer(result.data)
                         extracted_result_data = None
                         if result_count > 0:
-                            extracted_result_data = self._extract_filter_info_from_question(
-                                question, result_count)
+                            extracted_result_data = self._extract_filter_info_from_question(question, result_count)
 
                         self._store_conversation_turn(
-                            question, result.data, context_info,
-                            result_data=extracted_result_data
+                            question, result.data, context_info, result_data=extracted_result_data
                         )
                         self._conversation_stored = True
                     return result.data
@@ -344,8 +341,7 @@ class CSVQuestionAnswerer:
             logger.error("Enhanced engine error: %s", e, exc_info=True)
             return None
 
-    def _get_answer_original(self, question: str, csv_path: str | None = None,
-                             context_info=None) -> str | tuple:
+    def _get_answer_original(self, question: str, csv_path: str | None = None, context_info=None) -> str | tuple:
         """Original implementation as fallback."""
         # Check if this is a complex query that needs to be broken down into steps
         if self._is_complex_query(question):
@@ -361,14 +357,12 @@ class CSVQuestionAnswerer:
             context_filter = None
             filtered_dataframe = None
             if self.enable_context_memory and self.context_memory:
-                context_filter = self.context_memory.get_context_data_filter(
-                    question)
+                context_filter = self.context_memory.get_context_data_filter(question)
                 logger.debug("Context filter result: %s", context_filter)
 
                 # Apply the context filter to get the subset of data
-                if context_filter and 'filter_column' in context_filter:
-                    filtered_dataframe = self._apply_context_filter(
-                        context_filter)
+                if context_filter and "filter_column" in context_filter:
+                    filtered_dataframe = self._apply_context_filter(context_filter)
                     logger.debug(
                         "Filtered dataframe result: %s",
                         filtered_dataframe is not None,
@@ -390,8 +384,7 @@ class CSVQuestionAnswerer:
                 chunks = self.data_handler.create_chunks()
 
             # Extract information from the question
-            question_info = self.question_parser.extract_question_info(
-                question)
+            question_info = self.question_parser.extract_question_info(question)
 
             # Check if this is an aggregation question on filtered data
             logger.debug(
@@ -408,8 +401,7 @@ class CSVQuestionAnswerer:
                     "Processing aggregation question on filtered data: %d records",
                     len(filtered_dataframe),
                 )
-                result = self._handle_aggregation_on_filtered_data(
-                    question, filtered_dataframe)
+                result = self._handle_aggregation_on_filtered_data(question, filtered_dataframe)
                 if result:
                     return result
 
@@ -435,32 +427,33 @@ class CSVQuestionAnswerer:
             command_info = question_info
 
             # Check if we have a special command query
-            if command_info and 'command' in command_info:
+            if command_info and "command" in command_info:
                 # Check if this is a spell correction that should be auto-corrected
-                if command_info.get('auto_correct'):
+                if command_info.get("auto_correct"):
                     # Remove the auto_correct flag to prevent infinite recursion
-                    command_info.pop('auto_correct', None)
-                    command_info.pop('original', None)
+                    command_info.pop("auto_correct", None)
+                    command_info.pop("original", None)
 
-                command = command_info['command']
-                operation = command_info.get('operation')
-                columns = command_info.get('columns', [])
+                command = command_info["command"]
+                operation = command_info.get("operation")
+                columns = command_info.get("columns", [])
 
                 logger.debug(
                     "Processing command: %s, operation: %s, columns: %s",
-                    command, operation, columns,
+                    command,
+                    operation,
+                    columns,
                 )
 
                 # Handle help queries
-                if command == 'help' and operation == 'suggest_questions':
+                if command == "help" and operation == "suggest_questions":
                     return self.generate_suggested_questions(csv_path)
 
                 # Create a query plan based on the command
-                query_plan = {'operation': operation}
+                query_plan = {"operation": operation}
 
                 # Check for 'where' clause in the question
-                where_match = re.search(
-                    r'where\s+([\w\s]+)\s+(?:is|=)\s+([\w\s]+)', question.lower())
+                where_match = re.search(r"where\s+([\w\s]+)\s+(?:is|=)\s+([\w\s]+)", question.lower())
                 if where_match:
                     filter_column = where_match.group(1).strip()
                     filter_value = where_match.group(2).strip()
@@ -475,8 +468,7 @@ class CSVQuestionAnswerer:
                     if actual_column:
                         # Check if the column has the exact value (case-insensitive)
                         # First, get all unique values in the column
-                        unique_values = self.data_handler.get_dataframe(
-                        )[actual_column].astype(str).unique()
+                        unique_values = self.data_handler.get_dataframe()[actual_column].astype(str).unique()
 
                         # Find the closest match (case-insensitive)
                         actual_value = filter_value
@@ -485,40 +477,33 @@ class CSVQuestionAnswerer:
                                 actual_value = val
                                 break
 
-                        query_plan['filters'] = [{
-                            'column': actual_column,
-                            'operator': '=',
-                            'value': actual_value
-                        }]
+                        query_plan["filters"] = [{"column": actual_column, "operator": "=", "value": actual_value}]
 
                         # Make sure we're including ALL columns in the result
-                        if operation == 'list':
+                        if operation == "list":
                             # Empty list means all columns in our implementation
                             # This is critical for 'where' queries to return all columns
-                            query_plan['columns'] = []
+                            query_plan["columns"] = []
 
-                        logger.debug(
-                            "Added filter: %s = %s", actual_column, filter_value)
+                        logger.debug("Added filter: %s = %s", actual_column, filter_value)
 
                 # Add columns if specified
                 if columns:
-                    query_plan['columns'] = columns
+                    query_plan["columns"] = columns
                 else:
                     # If no specific columns, use all columns
-                    query_plan['columns'] = self.data_handler.get_columns()
+                    query_plan["columns"] = self.data_handler.get_columns()
 
                 # Execute the query plan
-                result_df, description = self.data_handler.execute_query_plan(
-                    query_plan)
+                result_df, description = self.data_handler.execute_query_plan(query_plan)
 
                 if not result_df.empty:
-                    if query_plan['operation'] == 'summarize':
+                    if query_plan["operation"] == "summarize":
                         # Summarize by column if specified
-                        if query_plan.get('columns'):
-                            column = query_plan['columns'][0]
+                        if query_plan.get("columns"):
+                            column = query_plan["columns"][0]
                             # Get unique values and their counts
-                            value_counts = self.data_handler.get_value_counts(
-                                column)
+                            value_counts = self.data_handler.get_value_counts(column)
                             if value_counts is not None:
                                 return self.format_value_counts(column, value_counts)
                             else:
@@ -527,48 +512,43 @@ class CSVQuestionAnswerer:
                             # Summarize all data
                             return self.format_dataframe(self.data_handler.get_dataframe())
 
-                    elif query_plan['operation'] == 'list':
+                    elif query_plan["operation"] == "list":
                         # List records, filtered if specified
-                        if 'filters' in query_plan:
-                            logger.debug(
-                                "Filtered result_df type: %s", type(result_df))
-                            if hasattr(result_df, 'shape'):
-                                logger.debug(
-                                    "Filtered result_df shape: %s", result_df.shape)
-                            if hasattr(result_df, 'columns'):
+                        if "filters" in query_plan:
+                            logger.debug("Filtered result_df type: %s", type(result_df))
+                            if hasattr(result_df, "shape"):
+                                logger.debug("Filtered result_df shape: %s", result_df.shape)
+                            if hasattr(result_df, "columns"):
                                 logger.debug(
                                     "Filtered result_df columns: %s",
                                     result_df.columns.tolist(),
                                 )
 
                             # Always ensure we have all columns for filtered results
-                            if hasattr(result_df, 'ndim'):
+                            if hasattr(result_df, "ndim"):
                                 if result_df.ndim == 1:  # Series case
                                     # Get the filtered indices
                                     filtered_indices = result_df.index
                                     # Get the full dataframe with all columns for those indices
-                                    result_df = self.data_handler.get_dataframe(
-                                    ).loc[filtered_indices]
+                                    result_df = self.data_handler.get_dataframe().loc[filtered_indices]
                                 # DataFrame with single column
                                 elif len(result_df.columns) == 1:
                                     # Get the filtered indices
                                     filtered_indices = result_df.index
                                     # Get the full dataframe with all columns for those indices
-                                    result_df = self.data_handler.get_dataframe(
-                                    ).loc[filtered_indices]
+                                    result_df = self.data_handler.get_dataframe().loc[filtered_indices]
 
                                 logger.debug(
                                     "Reconstructed full dataframe with shape: %s",
                                     result_df.shape,
                                 )
-                                logger.debug(
-                                    "Columns: %s", result_df.columns.tolist())
+                                logger.debug("Columns: %s", result_df.columns.tolist())
 
                             return self.format_dataframe(result_df)
                         else:
                             return self.format_dataframe(self.data_handler.get_dataframe())
 
-                    elif query_plan['operation'] == 'count':
+                    elif query_plan["operation"] == "count":
                         # Count records
                         count = len(self.data_handler.get_dataframe())
                         return f"Found {count} records in the dataset."
@@ -580,25 +560,22 @@ class CSVQuestionAnswerer:
 
             # Check if we have a numerical comparison query
             if comparison_info:
-                column = comparison_info['column']
-                operator = comparison_info['operator']
-                value = comparison_info['value']
+                column = comparison_info["column"]
+                operator = comparison_info["operator"]
+                value = comparison_info["value"]
 
                 # Use the data handler to filter by comparison
-                matches = self.data_handler.filter_by_comparison(
-                    column, operator, value)
+                matches = self.data_handler.filter_by_comparison(column, operator, value)
 
                 if not matches.empty:
                     return self.format_matches(matches, target_column, column, f"{operator} {value}")
 
             # Check for keyword search patterns like "all records are festival"
-            keyword_match = re.search(
-                r'all\s+records\s+(?:are|with|containing|having|about)\s+(\w+)', question.lower())
+            keyword_match = re.search(r"all\s+records\s+(?:are|with|containing|having|about)\s+(\w+)", question.lower())
             if keyword_match:
                 keyword = keyword_match.group(1).strip()
                 logger.debug("Detected keyword search for: %s", keyword)
-                matches = self.data_handler.search_value_in_all_columns(
-                    keyword)
+                matches = self.data_handler.search_value_in_all_columns(keyword)
                 if not matches.empty:
                     return self.format_dataframe(matches)
                 else:
@@ -611,8 +588,7 @@ class CSVQuestionAnswerer:
             # For simple queries, try direct search across all columns
             if simple_query:
                 # Try to find matches across all columns
-                matches = self.data_handler.search_value_in_all_columns(
-                    search_term)
+                matches = self.data_handler.search_value_in_all_columns(search_term)
                 if not matches.empty:
                     return self.format_dataframe(matches)
 
@@ -623,19 +599,19 @@ class CSVQuestionAnswerer:
                 columns = self.data_handler.get_columns()
 
                 # Use LLM to analyze the question and generate a query plan
-                query_plan = self.ollama_client.analyze_question(
-                    question, columns, sample_data)
+                query_plan = self.ollama_client.analyze_question(question, columns, sample_data)
 
                 if query_plan:
                     # Execute the query plan
-                    result_df, description = self.data_handler.execute_query_plan(
-                        query_plan)
+                    result_df, description = self.data_handler.execute_query_plan(query_plan)
 
                     if not result_df.empty:
                         # Format the results
                         if len(result_df) > 10:
                             # For large result sets, summarize
-                            summary = f"{description}\n\nFound {len(result_df)} matching records. Here are the first 10:\n\n"
+                            summary = (
+                                f"{description}\n\nFound {len(result_df)} matching records. Here are the first 10:\n\n"
+                            )
                             return summary + self.format_dataframe(result_df.head(10))
                         else:
                             # For smaller result sets, show all
@@ -646,8 +622,7 @@ class CSVQuestionAnswerer:
             # If we have enough information for a direct lookup
             if id_column and id_value:
                 # Try direct lookup first
-                matches = self.data_handler.find_rows_by_value(
-                    id_column, id_value)
+                matches = self.data_handler.find_rows_by_value(id_column, id_value)
 
                 if not matches.empty:
                     return self.format_matches(matches, target_column, id_column, id_value)
@@ -655,34 +630,36 @@ class CSVQuestionAnswerer:
             # Check if the query is just a simple ID or value that doesn't exist in our data
             csv_dataframe = self.data_handler.get_dataframe()
 
-            if len(search_term) < 10 and not any(search_term in str(row).lower() for _, row in csv_dataframe.iterrows()):
+            if len(search_term) < 10 and not any(
+                search_term in str(row).lower() for _, row in csv_dataframe.iterrows()
+            ):
                 # Try to find similar values using fuzzy matching
-                similar_values = self.fuzzy_matcher.find_similar_values(
-                    search_term, csv_dataframe)
+                similar_values = self.fuzzy_matcher.find_similar_values(search_term, csv_dataframe)
                 if similar_values:
                     # Format the suggestion message
                     if len(similar_values) == 1:
                         suggestion = similar_values[0]
-                        return (f"I couldn't find '{question.strip()}' in the CSV data. "
-                                f"Did you mean '{suggestion}'? If yes, please ask about that instead.")
+                        return (
+                            f"I couldn't find '{question.strip()}' in the CSV data. "
+                            f"Did you mean '{suggestion}'? If yes, please ask about that instead."
+                        )
                     else:
-                        suggestions = ", ".join(
-                            [f"'{v}'" for v in similar_values[:3]])
-                        return (f"I couldn't find '{question.strip()}' in the CSV data. "
-                                f"Did you mean one of these: {suggestions}? "
-                                f"If yes, please ask about that instead.")
-                return f"I couldn't find '{question.strip()}' in the CSV data. Please check if the value exists or try a different query."
+                        suggestions = ", ".join([f"'{v}'" for v in similar_values[:3]])
+                        return (
+                            f"I couldn't find '{question.strip()}' in the CSV data. "
+                            f"Did you mean one of these: {suggestions}? "
+                            f"If yes, please ask about that instead."
+                        )
+                return (
+                    f"I couldn't find '{question.strip()}' in the CSV data. "
+                    "Please check if the value exists or try a different query."
+                )
 
-            # If direct lookup fails or we don't have enough info, use vector search
-            # First make sure we have chunks to search through
-            if chunks is None:
-                chunks = self.data_handler.create_chunks()
-
-            # Only proceed with vector search if we have chunks
+            # Use semantic search for context retrieval
+            response = self._answer_via_semantic_search(question, self.data_handler.get_dataframe())
+            if response:
+                return response
             context = ""
-            if chunks and len(chunks) > 0:
-                self.vector_search.build_vector_index(chunks)
-                context = self.vector_search.retrieve_context(question)
 
             # Try to extract answer from context if we have target and ID columns
             if target_column and id_column and id_value:
@@ -694,11 +671,18 @@ class CSVQuestionAnswerer:
                         )
                     except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                         logger.error("Ollama error during context lookup: %s", e, exc_info=True)
-                        return f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
+                        return (
+                            f"I'm not able to find a proper answer. Error: {e.user_message}. "
+                            "Would you like to ask another way?"
+                        )
 
             # For general questions about the data, only use the LLM if we have relevant context
             if not context.strip():
-                return "I couldn't find any matching information in the CSV data. Please try rephrasing your question or check if the value you're looking for exists in the data."
+                return (
+                    "I couldn't find any matching information in the CSV data. "
+                    "Please try rephrasing your question or check if the value "
+                    "you're looking for exists in the data."
+                )
 
             # Ask the LLM with the context we found
             try:
@@ -707,7 +691,9 @@ class CSVQuestionAnswerer:
                 )
             except (OllamaConnectionError, OllamaTimeoutError, OllamaResponseError) as e:
                 logger.error("Ollama error during question answering: %s", e, exc_info=True)
-                result = f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
+                result = (
+                    f"I'm not able to find a proper answer. Error: {e.user_message}. Would you like to ask another way?"
+                )
 
         except Exception as e:
             logger.error("Error processing question: %s", e, exc_info=True)
@@ -715,7 +701,7 @@ class CSVQuestionAnswerer:
 
         finally:
             # Restore original dataframe if we temporarily replaced it
-            if filtered_dataframe is not None and 'original_df' in locals():
+            if filtered_dataframe is not None and "original_df" in locals():
                 self.data_handler._dataframe = original_df
                 logger.debug("Restored original dataframe")
 
@@ -738,27 +724,24 @@ class CSVQuestionAnswerer:
         logger.debug("DataFrame head:\n%s", df.head())
 
         # Make sure we have a DataFrame with multiple columns, not a Series
-        if hasattr(df, 'ndim') and df.ndim == 1:
+        if hasattr(df, "ndim") and df.ndim == 1:
             # Convert Series to DataFrame
             df = df.to_frame()
 
         # Ensure we have a proper DataFrame object
-        if not hasattr(df, 'columns') or len(df.columns) == 0:
+        if not hasattr(df, "columns") or len(df.columns) == 0:
             return "Error: Invalid data format"
 
         # For small dataframes, use a more readable format
         if len(df) <= 20:
             # Create a nicely formatted table
-            col_widths = [max(len(str(x)) for x in df[col].astype(
-                str).tolist() + [col]) for col in df.columns]
-            header = "  ".join(col.ljust(width)
-                               for col, width in zip(df.columns, col_widths))
+            col_widths = [max(len(str(x)) for x in df[col].astype(str).tolist() + [col]) for col in df.columns]
+            header = "  ".join(col.ljust(width) for col, width in zip(df.columns, col_widths))
             separator = "-" * len(header)
 
             rows = []
             for _, row in df.iterrows():
-                formatted_row = "  ".join(str(val).ljust(width)
-                                          for val, width in zip(row.values, col_widths))
+                formatted_row = "  ".join(str(val).ljust(width) for val, width in zip(row.values, col_widths))
                 rows.append(formatted_row)
 
             return "\n".join([header, separator] + rows)
@@ -769,8 +752,7 @@ class CSVQuestionAnswerer:
 
         rows = []
         for _, row in df.head(20).iterrows():  # Limit to 20 rows max
-            formatted_row = "| " + \
-                " | ".join([str(val) for val in row.values]) + " |"
+            formatted_row = "| " + " | ".join([str(val) for val in row.values]) + " |"
             rows.append(formatted_row)
 
         if len(df) > 20:
@@ -805,12 +787,12 @@ class CSVQuestionAnswerer:
         # Identify column types and gather unique values for categorical columns
         for col in columns:
             # Check if column is numeric
-            if self.data_handler.csv_dataframe[col].dtype.kind in 'ifc':
+            if self.data_handler.csv_dataframe[col].dtype.kind in "ifc":
                 numerical_columns.append(col)
                 continue
 
             # Check if column might be a date (simple heuristic)
-            date_pattern = r'\d{4}[-/]\d{1,2}[-/]\d{1,2}'
+            date_pattern = r"\d{4}[-/]\d{1,2}[-/]\d{1,2}"
             sample_val = str(self.data_handler.csv_dataframe[col].iloc[0])
             if re.search(date_pattern, sample_val):
                 date_columns.append(col)
@@ -846,32 +828,28 @@ class CSVQuestionAnswerer:
             questions.append("\n📈 Numerical Analysis:")
             for col in numerical_columns[:3]:  # Limit to 3 columns
                 questions.append(f"- what is the average {col}?")
-                questions.append(
-                    f"- show records with {col} greater than [value]")
+                questions.append(f"- show records with {col} greater than [value]")
                 questions.append(f"- what is the highest {col}?")
 
         # Questions about date columns
         if date_columns:
             questions.append("\n📅 Time-Based Questions:")
             for col in date_columns[:2]:  # Limit to 2 date columns
-                questions.append(
-                    f"- show records from [specific date] in {col}")
-                questions.append(
-                    f"- list records between [date1] and [date2] in {col}")
+                questions.append(f"- show records from [specific date] in {col}")
+                questions.append(f"- list records between [date1] and [date2] in {col}")
 
         # Advanced questions
         questions.append("\n🔬 Advanced Questions:")
         if len(categorical_columns) >= 2 and len(categorical_columns) > 0:
             col1 = categorical_columns[0]
-            col2 = categorical_columns[min(1, len(categorical_columns)-1)]
+            col2 = categorical_columns[min(1, len(categorical_columns) - 1)]
             questions.append(f"- count records grouped by {col1}")
             questions.append(f"- summarize data by {col2}")
 
         if len(numerical_columns) >= 1 and len(categorical_columns) >= 1:
             num_col = numerical_columns[0]
             cat_col = categorical_columns[0]
-            questions.append(
-                f"- what is the average {num_col} for each {cat_col}?")
+            questions.append(f"- what is the average {num_col} for each {cat_col}?")
             questions.append(f"- which {cat_col} has the highest {num_col}?")
 
         return "\n".join(questions)
@@ -886,10 +864,30 @@ class CSVQuestionAnswerer:
             True if this is an analysis request.
         """
         analysis_keywords = [
-            "analysis", "analyze", "statistics", "statistical", "stats", "stat",
-            "summary", "summarize", "overview", "insights", "patterns", "outliers",
-            "anomalies", "distribution", "trend", "average", "mean", "median", "mode",
-            "min", "max", "standard deviation", "std", "variance"
+            "analysis",
+            "analyze",
+            "statistics",
+            "statistical",
+            "stats",
+            "stat",
+            "summary",
+            "summarize",
+            "overview",
+            "insights",
+            "patterns",
+            "outliers",
+            "anomalies",
+            "distribution",
+            "trend",
+            "average",
+            "mean",
+            "median",
+            "mode",
+            "min",
+            "max",
+            "standard deviation",
+            "std",
+            "variance",
         ]
 
         question_lower = question.lower()
@@ -917,14 +915,11 @@ class CSVQuestionAnswerer:
 
         # Check for analysis combined with filtering
         analysis_keywords = ["analysis", "analyze", "statistics", "stats"]
-        filter_patterns = ["where", "with", "containing",
-                           "all records are", "records are", "for records"]
+        filter_patterns = ["where", "with", "containing", "all records are", "records are", "for records"]
 
         # Check if question contains both analysis and filtering
-        has_analysis = any(
-            keyword in question_lower for keyword in analysis_keywords)
-        has_filter = any(
-            pattern in question_lower for pattern in filter_patterns)
+        has_analysis = any(keyword in question_lower for keyword in analysis_keywords)
+        has_filter = any(pattern in question_lower for pattern in filter_patterns)
 
         if has_analysis and has_filter:
             return True
@@ -933,7 +928,7 @@ class CSVQuestionAnswerer:
         complex_patterns = [
             r"records\s+(?:with|containing|having)\s+\w+",
             r"all\s+records\s+(?:are|with|containing|having|about)\s+\w+",
-            r"analysis\s+.*\s+where\s+.*\s+is\s+\w+"
+            r"analysis\s+.*\s+where\s+.*\s+is\s+\w+",
         ]
 
         for pattern in complex_patterns:
@@ -971,16 +966,16 @@ class CSVQuestionAnswerer:
                         "operation": "filter",
                         "type": "keyword_search",
                         "keyword": "festival",
-                        "description": "Find records containing festival"
+                        "description": "Find records containing festival",
                     },
                     {
                         "operation": "analyze",
                         "type": "statistical",
                         "target": "filtered_results",
-                        "description": "Perform statistical analysis on filtered records"
-                    }
+                        "description": "Perform statistical analysis on filtered records",
+                    },
                 ],
-                "description": "Filter records containing 'festival' and then analyze them"
+                "description": "Filter records containing 'festival' and then analyze them",
             }
         elif question_lower == "analysis all records are not festival":
             return {
@@ -989,16 +984,16 @@ class CSVQuestionAnswerer:
                         "operation": "filter",
                         "type": "keyword_search_exclude",
                         "keyword": "festival",
-                        "description": "Find records NOT containing festival"
+                        "description": "Find records NOT containing festival",
                     },
                     {
                         "operation": "analyze",
                         "type": "statistical",
                         "target": "filtered_results",
-                        "description": "Perform statistical analysis on filtered records"
-                    }
+                        "description": "Perform statistical analysis on filtered records",
+                    },
                 ],
-                "description": "Filter records NOT containing 'festival' and then analyze them"
+                "description": "Filter records NOT containing 'festival' and then analyze them",
             }
 
         logger.debug("Breaking down complex query with LLM...")
@@ -1032,8 +1027,7 @@ class CSVQuestionAnswerer:
         question_lower = question.lower()
 
         # Check for negation in the query
-        has_negation = any(neg in question_lower for neg in [
-                           "not", "aren't", "aren't", "excluding", "except"])
+        has_negation = any(neg in question_lower for neg in ["not", "aren't", "aren't", "excluding", "except"])
 
         # Check for OR conditions
         has_or_condition = " or " in question_lower
@@ -1043,8 +1037,26 @@ class CSVQuestionAnswerer:
         keywords = []
 
         # Skip common words and find potential keywords
-        skip_words = ["analysis", "analyze", "all", "records", "are", "where", "with", "containing",
-                      "is", "the", "a", "an", "not", "aren't", "aren't", "excluding", "except", "or"]
+        skip_words = [
+            "analysis",
+            "analyze",
+            "all",
+            "records",
+            "are",
+            "where",
+            "with",
+            "containing",
+            "is",
+            "the",
+            "a",
+            "an",
+            "not",
+            "aren't",
+            "aren't",
+            "excluding",
+            "except",
+            "or",
+        ]
         for word in words:
             if word not in skip_words and len(word) > 3:
                 keywords.append(word)
@@ -1067,51 +1079,52 @@ class CSVQuestionAnswerer:
                         or_keywords.append(word)
 
             if or_keywords:
-                steps.append({
-                    "operation": "filter",
-                    "type": "compound_search",
-                    "keywords": or_keywords,
-                    "logical_operator": "or",
-                    "description": f"Find records containing any of: {', '.join(or_keywords)}"
-                })
+                steps.append(
+                    {
+                        "operation": "filter",
+                        "type": "compound_search",
+                        "keywords": or_keywords,
+                        "logical_operator": "or",
+                        "description": f"Find records containing any of: {', '.join(or_keywords)}",
+                    }
+                )
         # Handle regular keyword search
         elif keywords:
             keyword = keywords[-1]  # Use the last keyword if available
             if has_negation:
-                steps.append({
-                    "operation": "filter",
-                    "type": "keyword_search_exclude",
-                    "keyword": keyword,
-                    "description": f"Find records NOT containing {keyword}"
-                })
+                steps.append(
+                    {
+                        "operation": "filter",
+                        "type": "keyword_search_exclude",
+                        "keyword": keyword,
+                        "description": f"Find records NOT containing {keyword}",
+                    }
+                )
             else:
-                steps.append({
-                    "operation": "filter",
-                    "type": "keyword_search",
-                    "keyword": keyword,
-                    "description": f"Find records containing {keyword}"
-                })
+                steps.append(
+                    {
+                        "operation": "filter",
+                        "type": "keyword_search",
+                        "keyword": keyword,
+                        "description": f"Find records containing {keyword}",
+                    }
+                )
 
         # Add analysis step if this is an analysis request
         if is_analysis:
-            steps.append({
-                "operation": "analyze",
-                "type": "statistical",
-                "target": "filtered_results" if keywords or has_or_condition else "all_records",
-                "description": "Perform statistical analysis on records"
-            })
+            steps.append(
+                {
+                    "operation": "analyze",
+                    "type": "statistical",
+                    "target": "filtered_results" if keywords or has_or_condition else "all_records",
+                    "description": "Perform statistical analysis on records",
+                }
+            )
         else:
             # If not an analysis request, add a list step
-            steps.append({
-                "operation": "list",
-                "type": "display",
-                "description": "Display the filtered records"
-            })
+            steps.append({"operation": "list", "type": "display", "description": "Display the filtered records"})
 
-        return {
-            "steps": steps,
-            "description": f"Process query: {question}"
-        }
+        return {"steps": steps, "description": f"Process query: {question}"}
 
     def _execute_query_steps(self, question: str, csv_path: str | None = None) -> str:
         """Execute a complex query by breaking it down into steps.
@@ -1143,7 +1156,7 @@ class CSVQuestionAnswerer:
         result_df = self.data_handler.get_dataframe()
         step_results = []
 
-        logger.debug("Executing %d steps", len(query_plan['steps']))
+        logger.debug("Executing %d steps", len(query_plan["steps"]))
 
         for i, step in enumerate(query_plan["steps"]):
             operation = step.get("operation")
@@ -1156,34 +1169,29 @@ class CSVQuestionAnswerer:
                 if step_type == "keyword_search":
                     keyword = step.get("keyword")
                     if keyword:
-                        result_df = self.data_handler.search_value_in_all_columns(
-                            keyword)
-                        step_results.append(
-                            f"Found {len(result_df)} records containing '{keyword}'")
+                        result_df = self.data_handler.search_value_in_all_columns(keyword)
+                        step_results.append(f"Found {len(result_df)} records containing '{keyword}'")
                 elif step_type == "compound_search":
                     keywords = step.get("keywords")
                     logical_operator = step.get("logical_operator", "or")
                     if keywords:
-                        result_df = self.data_handler.search_multiple_values(
-                            keywords, logical_operator)
+                        result_df = self.data_handler.search_multiple_values(keywords, logical_operator)
                         step_results.append(
-                            f"Found {len(result_df)} records matching compound search with {logical_operator} condition")
+                            f"Found {len(result_df)} records matching compound search with {logical_operator} condition"
+                        )
                 elif step_type == "keyword_search_exclude":
                     keyword = step.get("keyword")
                     if keyword:
                         # Get all records first
                         all_records = self.data_handler.get_dataframe()
                         # Get records containing the keyword
-                        matching_records = self.data_handler.search_value_in_all_columns(
-                            keyword)
+                        matching_records = self.data_handler.search_value_in_all_columns(keyword)
                         # Get records NOT containing the keyword by filtering out matching records
                         if not matching_records.empty:
-                            result_df = all_records[~all_records.index.isin(
-                                matching_records.index)]
+                            result_df = all_records[~all_records.index.isin(matching_records.index)]
                         else:
                             result_df = all_records
-                        step_results.append(
-                            f"Found {len(result_df)} records NOT containing '{keyword}'")
+                        step_results.append(f"Found {len(result_df)} records NOT containing '{keyword}'")
                 elif step_type == "column_filter":
                     column = step.get("column")
                     value = step.get("value")
@@ -1198,23 +1206,18 @@ class CSVQuestionAnswerer:
                         if actual_column:
                             # Create a query plan for the data handler
                             filter_query = {
-                                'operation': 'list',
-                                'columns': [],  # Empty list means all columns
-                                'filters': [{
-                                    'column': actual_column,
-                                    'operator': '=',
-                                    'value': value
-                                }]
+                                "operation": "list",
+                                "columns": [],  # Empty list means all columns
+                                "filters": [{"column": actual_column, "operator": "=", "value": value}],
                             }
-                            result_df, _ = self.data_handler.execute_query_plan(
-                                filter_query)
+                            result_df, _ = self.data_handler.execute_query_plan(filter_query)
                             step_results.append(
-                                f"Filtered to {len(result_df)} records where {actual_column} is {value}")
+                                f"Filtered to {len(result_df)} records where {actual_column} is {value}"
+                            )
                         else:
                             step_results.append(f"Column '{column}' not found")
                     else:
-                        step_results.append(
-                            "Missing column or value for filter")
+                        step_results.append("Missing column or value for filter")
 
             elif operation == "analyze":
                 # If we have filtered results, analyze those
@@ -1225,8 +1228,7 @@ class CSVQuestionAnswerer:
 
                     # Perform analysis on the filtered data
                     analysis_results = self.data_handler.analyze_data()
-                    formatted_results = self._format_analysis_results(
-                        analysis_results, question)
+                    formatted_results = self._format_analysis_results(analysis_results, question)
 
                     # Restore the original dataframe
                     self.data_handler.csv_dataframe = original_df
@@ -1270,8 +1272,7 @@ class CSVQuestionAnswerer:
 
         # Try to extract column names from the question
         columns = self.data_handler.get_columns()
-        mentioned_columns = [
-            col for col in columns if col.lower() in question_lower]
+        mentioned_columns = [col for col in columns if col.lower() in question_lower]
 
         # Get all possible values for categorical columns to match in the question
         df = self.data_handler.get_dataframe()
@@ -1285,10 +1286,12 @@ class CSVQuestionAnswerer:
         # Check for specific column mentions
         for col in mentioned_columns:
             # Look for patterns like "analysis of DecibelsA" or "analyze EventType"
-            if any(f"{keyword} {col.lower()}" in question_lower or
-                   f"{keyword} of {col.lower()}" in question_lower or
-                   f"{keyword} for {col.lower()}" in question_lower
-                   for keyword in ["analysis", "analyze", "statistics", "stats"]):
+            if any(
+                f"{keyword} {col.lower()}" in question_lower
+                or f"{keyword} of {col.lower()}" in question_lower
+                or f"{keyword} for {col.lower()}" in question_lower
+                for keyword in ["analysis", "analyze", "statistics", "stats"]
+            ):
                 target_columns = [col]
             # Look for patterns like "analysis where Location is City Center"
             elif f"where {col.lower()}" in question_lower or f"for {col.lower()}" in question_lower:
@@ -1314,9 +1317,7 @@ class CSVQuestionAnswerer:
 
         # Perform the analysis
         analysis_results = self.data_handler.analyze_data(
-            filter_column=filter_column,
-            filter_value=filter_value,
-            target_columns=target_columns
+            filter_column=filter_column, filter_value=filter_value, target_columns=target_columns
         )
 
         # Format the results
@@ -1353,21 +1354,19 @@ class CSVQuestionAnswerer:
         if results["outliers"]:
             output.append("\nOutliers Detected:")
             for col, outlier_info in results["outliers"].items():
-                output.append(
-                    f"\n{col}: {outlier_info['count']} outliers detected")
-                if outlier_info['count'] > 0:
+                output.append(f"\n{col}: {outlier_info['count']} outliers detected")
+                if outlier_info["count"] > 0:
                     output.append(
-                        f"  Outlier values: {', '.join([str(round(v, 2)) for v in outlier_info['values'][:5]])}")
-                    if len(outlier_info['values']) > 5:
-                        output.append(
-                            f"  ... and {len(outlier_info['values']) - 5} more")
+                        f"  Outlier values: {', '.join([str(round(v, 2)) for v in outlier_info['values'][:5]])}"
+                    )
+                    if len(outlier_info["values"]) > 5:
+                        output.append(f"  ... and {len(outlier_info['values']) - 5} more")
 
                     # Add sample outlier records
-                    if outlier_info['records']:
+                    if outlier_info["records"]:
                         output.append("  Sample outlier records:")
-                        for i, record in enumerate(outlier_info['records'], 1):
-                            record_str = ", ".join(
-                                [f"{k}: {v}" for k, v in record.items()][:3])
+                        for i, record in enumerate(outlier_info["records"], 1):
+                            record_str = ", ".join([f"{k}: {v}" for k, v in record.items()][:3])
                             output.append(f"    Record {i}: {record_str}...")
 
         # Add categorical distributions
@@ -1407,8 +1406,7 @@ class CSVQuestionAnswerer:
 
             if "Did you mean '" in answer:
                 # Single suggestion
-                suggested_value = re.search(
-                    r"Did you mean '([^']+)'\?", answer)
+                suggested_value = re.search(r"Did you mean '([^']+)'\?", answer)
                 if suggested_value:
                     suggested_values = [suggested_value.group(1)]
             else:
@@ -1438,46 +1436,38 @@ class CSVQuestionAnswerer:
         prev_question = latest_turn.question.lower()
 
         # Pattern: "where EventType is Festival" -> "Festival records"
-        where_match = re.search(r'where\s+(\w+)\s+is\s+(\w+)', prev_question)
+        where_match = re.search(r"where\s+(\w+)\s+is\s+(\w+)", prev_question)
         if where_match:
-            column = where_match.group(1)
+            _column = where_match.group(1)
             value = where_match.group(2)
             context_description = f"{value} records"
 
         # Pattern: "with Location Urban Park" -> "Urban Park records"
-        with_match = re.search(r'with\s+(\w+)\s+([a-zA-Z\s]+)', prev_question)
+        with_match = re.search(r"with\s+(\w+)\s+([a-zA-Z\s]+)", prev_question)
         if with_match:
-            column = with_match.group(1)
+            _column = with_match.group(1)
             value = with_match.group(2).strip()
             context_description = f"{value} records"
 
         # If we found a good context description, use it
         if context_description:
             # Replace pronouns with the context description
-            resolved_question = re.sub(
-                r'\bthem\b', context_description, resolved_question, flags=re.IGNORECASE)
-            resolved_question = re.sub(
-                r'\bit\b', context_description, resolved_question, flags=re.IGNORECASE)
-            resolved_question = re.sub(
-                r'\bthat\b', context_description, resolved_question, flags=re.IGNORECASE)
-            resolved_question = re.sub(
-                r'\bthose\b', context_description, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bthem\b", context_description, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bit\b", context_description, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bthat\b", context_description, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bthose\b", context_description, resolved_question, flags=re.IGNORECASE)
         elif latest_turn.entities_mentioned:
             # Fallback to the original logic
             main_entity = latest_turn.entities_mentioned[0]
-            resolved_question = re.sub(
-                r'\bit\b', main_entity, resolved_question, flags=re.IGNORECASE)
-            resolved_question = re.sub(
-                r'\bthat\b', main_entity, resolved_question, flags=re.IGNORECASE)
-            resolved_question = re.sub(
-                r'\bthose\b', main_entity, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bit\b", main_entity, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bthat\b", main_entity, resolved_question, flags=re.IGNORECASE)
+            resolved_question = re.sub(r"\bthose\b", main_entity, resolved_question, flags=re.IGNORECASE)
 
         logger.debug("Resolved '%s' to '%s'", question, resolved_question)
 
         return resolved_question
 
-    def _store_conversation_turn(self, question: str, answer: str, context_info,
-                                 result_data=None) -> None:
+    def _store_conversation_turn(self, question: str, answer: str, context_info, result_data=None) -> None:
         """Store the conversation turn in context memory."""
         if not self.context_memory:
             return
@@ -1496,23 +1486,25 @@ class CSVQuestionAnswerer:
 
         # Store metadata
         metadata = {
-            'csv_loaded': self.data_handler.get_dataframe() is not None,
-            'had_context': context_info is not None and context_info.get('is_follow_up', False)
+            "csv_loaded": self.data_handler.get_dataframe() is not None,
+            "had_context": context_info is not None and context_info.get("is_follow_up", False),
         }
 
         # Create result_data if we have filtering information
         logger.debug(
             "Checking filter extraction: result_data=%s, question_type=%s, result_count=%d",
-            result_data, question_type, result_count,
+            result_data,
+            question_type,
+            result_count,
         )
 
-        if result_data is None and question_type in ['filter', 'list'] and result_count > 0:
+        if result_data is None and question_type in ["filter", "list"] and result_count > 0:
             # Try to extract filter information from the question
-            result_data = self._extract_filter_info_from_question(
-                question, result_count)
+            result_data = self._extract_filter_info_from_question(question, result_count)
             logger.debug(
                 "Extracted result_data for question '%s': %s",
-                question, result_data,
+                question,
+                result_data,
             )
 
         self.context_memory.add_turn(
@@ -1523,27 +1515,27 @@ class CSVQuestionAnswerer:
             result_count=result_count,
             confidence_score=confidence_score,
             metadata=metadata,
-            result_data=result_data
+            result_data=result_data,
         )
 
     def _classify_question_type(self, question: str) -> str:
         """Classify the type of question for context memory."""
         question_lower = question.lower()
 
-        if any(word in question_lower for word in ['summarize', 'summary']):
-            return 'summary'
-        elif any(word in question_lower for word in ['list', 'show', 'display']):
-            return 'list'
-        elif any(word in question_lower for word in ['count', 'how many']):
-            return 'count'
-        elif any(word in question_lower for word in ['where', 'filter']):
-            return 'filter'
-        elif any(word in question_lower for word in ['analyze', 'analysis']):
-            return 'analysis'
-        elif 'what' in question_lower:
-            return 'lookup'
+        if any(word in question_lower for word in ["summarize", "summary"]):
+            return "summary"
+        elif any(word in question_lower for word in ["list", "show", "display"]):
+            return "list"
+        elif any(word in question_lower for word in ["count", "how many"]):
+            return "count"
+        elif any(word in question_lower for word in ["where", "filter"]):
+            return "filter"
+        elif any(word in question_lower for word in ["analyze", "analysis"]):
+            return "analysis"
+        elif "what" in question_lower:
+            return "lookup"
         else:
-            return 'unknown'
+            return "unknown"
 
     def _extract_entities(self, question: str, answer: str) -> list[str]:
         """Extract entities (columns, values) mentioned in question and answer."""
@@ -1557,15 +1549,14 @@ class CSVQuestionAnswerer:
                     entities.append(col)
 
         # Extract quoted values or capitalized words
-        quoted_values = re.findall(
-            r"'([^']+)'|\"([^\"]+)\"", question + " " + answer)
+        quoted_values = re.findall(r"'([^']+)'|\"([^\"]+)\"", question + " " + answer)
         for quote_tuple in quoted_values:
             for value in quote_tuple:
                 if value:
                     entities.append(value)
 
         # Extract capitalized words (potential proper nouns)
-        cap_words = re.findall(r'\b[A-Z][a-zA-Z]+\b', question)
+        cap_words = re.findall(r"\b[A-Z][a-zA-Z]+\b", question)
         entities.extend(cap_words)
 
         return list(set(entities))  # Remove duplicates
@@ -1574,10 +1565,10 @@ class CSVQuestionAnswerer:
         """Extract the number of results from the answer text."""
         # Look for patterns like "Found 5 matches", "3 records", etc.
         count_patterns = [
-            r'found (\d+) (?:matches|records|results)',
-            r'(\d+) (?:matches|records|results)',
-            r'returned (\d+)',
-            r'showing (\d+)'
+            r"found (\d+) (?:matches|records|results)",
+            r"(\d+) (?:matches|records|results)",
+            r"returned (\d+)",
+            r"showing (\d+)",
         ]
 
         for pattern in count_patterns:
@@ -1586,9 +1577,8 @@ class CSVQuestionAnswerer:
                 return int(match.group(1))
 
         # Count lines that look like data records
-        lines = answer.split('\n')
-        record_lines = [line for line in lines if line.strip() and (
-            '-' in line or ':' in line)]
+        lines = answer.split("\n")
+        record_lines = [line for line in lines if line.strip() and ("-" in line or ":" in line)]
         if len(record_lines) > 2:  # More than just headers
             return len(record_lines) - 2  # Subtract headers
 
@@ -1597,9 +1587,9 @@ class CSVQuestionAnswerer:
     def _calculate_confidence_score(self, answer: str) -> float:
         """Calculate confidence score for the answer."""
         # Simple heuristic based on answer characteristics
-        if any(phrase in answer.lower() for phrase in ['error', 'could not', 'not found', 'no matches']):
+        if any(phrase in answer.lower() for phrase in ["error", "could not", "not found", "no matches"]):
             return 0.3
-        elif any(phrase in answer.lower() for phrase in ['found', 'matches', 'records']):
+        elif any(phrase in answer.lower() for phrase in ["found", "matches", "records"]):
             return 0.9
         elif len(answer) > 100:  # Substantial answer
             return 0.8
@@ -1608,36 +1598,31 @@ class CSVQuestionAnswerer:
 
     def _extract_filter_info_from_question(self, question: str, result_count: int) -> dict:
         """Extract filter information from the question to store for context."""
-        filter_info = {
-            'filter_applied': True,
-            'original_question': question,
-            'result_count': result_count
-        }
+        filter_info = {"filter_applied": True, "original_question": question, "result_count": result_count}
 
         # Try to extract filter conditions from common patterns
         question_lower = question.lower()
 
         # Pattern: "where Column is Value"
-        where_match = re.search(r'where\s+(\w+)\s+is\s+(\w+)', question_lower)
+        where_match = re.search(r"where\s+(\w+)\s+is\s+(\w+)", question_lower)
         if where_match:
-            filter_info['filter_column'] = where_match.group(1)
-            filter_info['filter_value'] = where_match.group(2)
-            filter_info['filter_operator'] = '='
+            filter_info["filter_column"] = where_match.group(1)
+            filter_info["filter_value"] = where_match.group(2)
+            filter_info["filter_operator"] = "="
 
         # Pattern: "records where EventType is Traffic"
-        event_match = re.search(
-            r'where\s+(\w+)\s+is\s+([a-zA-Z]+)', question_lower)
+        event_match = re.search(r"where\s+(\w+)\s+is\s+([a-zA-Z]+)", question_lower)
         if event_match:
-            filter_info['filter_column'] = event_match.group(1)
-            filter_info['filter_value'] = event_match.group(2)
-            filter_info['filter_operator'] = '='
+            filter_info["filter_column"] = event_match.group(1)
+            filter_info["filter_value"] = event_match.group(2)
+            filter_info["filter_operator"] = "="
 
         # Pattern: "with Column Value" (e.g., "show records with Location Urban Park")
-        with_match = re.search(r'with\s+(\w+)\s+([a-zA-Z\s]+)', question_lower)
+        with_match = re.search(r"with\s+(\w+)\s+([a-zA-Z\s]+)", question_lower)
         if with_match:
-            filter_info['filter_column'] = with_match.group(1)
-            filter_info['filter_value'] = with_match.group(2).strip()
-            filter_info['filter_operator'] = '='
+            filter_info["filter_column"] = with_match.group(1)
+            filter_info["filter_value"] = with_match.group(2).strip()
+            filter_info["filter_operator"] = "="
 
         logger.debug("Extracted filter info: %s", filter_info)
 
@@ -1646,9 +1631,9 @@ class CSVQuestionAnswerer:
     def _apply_context_filter(self, context_filter: dict):
         """Apply context filter to get filtered dataframe."""
         try:
-            if 'filter_column' in context_filter and 'filter_value' in context_filter:
-                filter_column = context_filter['filter_column']
-                filter_value = context_filter['filter_value']
+            if "filter_column" in context_filter and "filter_value" in context_filter:
+                filter_column = context_filter["filter_column"]
+                filter_value = context_filter["filter_value"]
 
                 # Get the original dataframe
                 df = self.data_handler.get_dataframe()
@@ -1665,12 +1650,14 @@ class CSVQuestionAnswerer:
                     return None
 
                 # Apply the filter
-                filtered_df = df[df[actual_column].astype(
-                    str).str.lower() == filter_value.lower()]
+                filtered_df = df[df[actual_column].astype(str).str.lower() == filter_value.lower()]
 
                 logger.debug(
                     "Filtered %d records to %d records using %s = %s",
-                    len(df), len(filtered_df), actual_column, filter_value,
+                    len(df),
+                    len(filtered_df),
+                    actual_column,
+                    filter_value,
                 )
 
                 return filtered_df
@@ -1685,8 +1672,20 @@ class CSVQuestionAnswerer:
         """Check if the question is asking for aggregation (max, min, avg, etc.)."""
         question_lower = question.lower()
         aggregation_keywords = [
-            'max', 'maximum', 'min', 'minimum', 'avg', 'average', 'mean',
-            'sum', 'total', 'count', 'highest', 'lowest', 'largest', 'smallest'
+            "max",
+            "maximum",
+            "min",
+            "minimum",
+            "avg",
+            "average",
+            "mean",
+            "sum",
+            "total",
+            "count",
+            "highest",
+            "lowest",
+            "largest",
+            "smallest",
         ]
         return any(keyword in question_lower for keyword in aggregation_keywords)
 
@@ -1721,39 +1720,40 @@ class CSVQuestionAnswerer:
 
             # Try to convert to numeric if possible
             try:
-                numeric_col = pd.to_numeric(
-                    filtered_df[target_column], errors='coerce')
+                numeric_col = pd.to_numeric(filtered_df[target_column], errors="coerce")
 
                 logger.debug(
                     "Column %s numeric conversion - NaN count: %d/%d",
-                    target_column, numeric_col.isna().sum(), len(numeric_col),
+                    target_column,
+                    numeric_col.isna().sum(),
+                    len(numeric_col),
                 )
 
                 if numeric_col.isna().all():
                     # Not a numeric column, handle as text
-                    if any(word in question_lower for word in ['max', 'maximum', 'highest', 'largest']):
+                    if any(word in question_lower for word in ["max", "maximum", "highest", "largest"]):
                         result = filtered_df[target_column].max()
                         return f"The maximum {target_column} in these {len(filtered_df)} records is: {result}"
-                    elif any(word in question_lower for word in ['min', 'minimum', 'lowest', 'smallest']):
+                    elif any(word in question_lower for word in ["min", "minimum", "lowest", "smallest"]):
                         result = filtered_df[target_column].min()
                         return f"The minimum {target_column} in these {len(filtered_df)} records is: {result}"
                     else:
                         return f"Cannot perform numerical aggregation on non-numeric column '{target_column}'"
                 else:
                     # Numeric column
-                    if any(word in question_lower for word in ['max', 'maximum', 'highest', 'largest']):
+                    if any(word in question_lower for word in ["max", "maximum", "highest", "largest"]):
                         result = numeric_col.max()
                         return f"The maximum {target_column} in these {len(filtered_df)} records is: {result}"
-                    elif any(word in question_lower for word in ['min', 'minimum', 'lowest', 'smallest']):
+                    elif any(word in question_lower for word in ["min", "minimum", "lowest", "smallest"]):
                         result = numeric_col.min()
                         return f"The minimum {target_column} in these {len(filtered_df)} records is: {result}"
-                    elif any(word in question_lower for word in ['avg', 'average', 'mean']):
+                    elif any(word in question_lower for word in ["avg", "average", "mean"]):
                         result = numeric_col.mean()
                         return f"The average {target_column} in these {len(filtered_df)} records is: {result:.2f}"
-                    elif any(word in question_lower for word in ['sum', 'total']):
+                    elif any(word in question_lower for word in ["sum", "total"]):
                         result = numeric_col.sum()
                         return f"The total {target_column} in these {len(filtered_df)} records is: {result}"
-                    elif any(word in question_lower for word in ['count']):
+                    elif any(word in question_lower for word in ["count"]):
                         result = len(filtered_df)
                         return f"There are {result} records in the filtered data."
 

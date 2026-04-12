@@ -3,6 +3,7 @@
 Test runner functionality converted to pytest format.
 This allows running the test suite validation as part of pytest.
 """
+
 import pytest
 import subprocess
 import sys
@@ -15,10 +16,7 @@ class TestRunner:
     def test_pytest_is_available(self):
         """Test that pytest is available and working."""
         try:
-            result = subprocess.run(
-                ["python", "-m", "pytest", "--version"],
-                capture_output=True, check=True, text=True
-            )
+            result = subprocess.run(["python", "-m", "pytest", "--version"], capture_output=True, check=True, text=True)
             assert result.returncode == 0
             assert "pytest" in result.stdout.lower()
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
@@ -34,7 +32,6 @@ class TestRunner:
             "csv_qa/question_answerer.py",
             "csv_qa/question_router.py",
             "csv_qa/structured_query_engine.py",
-            "csv_qa/enhanced_vector_search.py",
             "csv_qa/hybrid_engine.py",
             "tests/integration/",
             "tests/fixtures/",
@@ -53,46 +50,34 @@ class TestRunner:
         test_files = list(integration_dir.glob("test_*.py"))
         assert len(test_files) > 0, "No integration test files found"
 
-        expected_files = [
-            "test_context_memory_integration.py",
-            "test_csv_qa_integration.py"
-        ]
+        expected_files = ["test_context_memory_integration.py", "test_csv_qa_integration.py"]
 
         for expected_file in expected_files:
             file_path = integration_dir / expected_file
-            assert file_path.exists(
-            ), f"Expected test file not found: {expected_file}"
+            assert file_path.exists(), f"Expected test file not found: {expected_file}"
 
     def test_context_memory_tests_runnable(self):
         """Test that context memory integration tests can be run."""
-        test_file = Path(__file__).parent / "integration" / \
-            "test_context_memory_integration.py"
+        test_file = Path(__file__).parent / "integration" / "test_context_memory_integration.py"
         assert test_file.exists(), "Context memory test file not found"
 
         # Run a quick test discovery to ensure the file is valid
-        result = subprocess.run([
-            "python", "-m", "pytest",
-            str(test_file),
-            "--collect-only",
-            "-q"
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            ["python", "-m", "pytest", str(test_file), "--collect-only", "-q"], capture_output=True, text=True
+        )
 
         assert result.returncode == 0, f"Context memory tests discovery failed: {result.stderr}"
         assert "test session starts" in result.stdout or "collected" in result.stdout
 
     def test_csv_qa_integration_tests_runnable(self):
         """Test that CSV QA integration tests can be run."""
-        test_file = Path(__file__).parent / "integration" / \
-            "test_csv_qa_integration.py"
+        test_file = Path(__file__).parent / "integration" / "test_csv_qa_integration.py"
         assert test_file.exists(), "CSV QA integration test file not found"
 
         # Run a quick test discovery to ensure the file is valid
-        result = subprocess.run([
-            "python", "-m", "pytest",
-            str(test_file),
-            "--collect-only",
-            "-q"
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            ["python", "-m", "pytest", str(test_file), "--collect-only", "-q"], capture_output=True, text=True
+        )
 
         assert result.returncode == 0, f"CSV QA integration tests discovery failed: {result.stderr}"
         assert "test session starts" in result.stdout or "collected" in result.stdout
@@ -102,17 +87,14 @@ class TestRunner:
         try:
             from csv_qa.question_router import QuestionRouter
             from csv_qa.structured_query_engine import StructuredQueryEngine
-            from csv_qa.enhanced_vector_search import CSVAwareVectorSearch
 
             # Test basic instantiation
             router = QuestionRouter()
             structured_engine = StructuredQueryEngine()
-            enhanced_search = CSVAwareVectorSearch()
 
             # Test that they have expected methods
-            assert hasattr(router, 'route_question')
-            assert hasattr(structured_engine, 'execute_query')
-            assert hasattr(enhanced_search, 'create_structured_chunks')
+            assert hasattr(router, "route_question")
+            assert hasattr(structured_engine, "execute_query")
 
         except ImportError as e:
             pytest.fail(f"Failed to import enhanced engines: {e}")
@@ -129,10 +111,10 @@ class TestRunner:
             )
 
             # Test that enhanced engines are available
-            assert hasattr(qa, 'question_router')
-            assert hasattr(qa, 'structured_engine')
-            assert hasattr(qa, 'enhanced_vector_search')
-            assert hasattr(qa, 'hybrid_engine')
+            assert hasattr(qa, "question_router")
+            assert hasattr(qa, "structured_engine")
+            assert hasattr(qa, "semantic_search")
+            assert hasattr(qa, "hybrid_engine")
 
         except Exception as e:
             pytest.fail(f"Failed to initialize main QA system: {e}")
@@ -151,12 +133,10 @@ class TestRunner:
 
         for expected_file in expected_files:
             file_path = sample_data_dir / expected_file
-            assert file_path.exists(
-            ), f"Expected sample file not found: {expected_file}"
+            assert file_path.exists(), f"Expected sample file not found: {expected_file}"
 
             # Check that file is not empty
-            assert file_path.stat(
-            ).st_size > 0, f"Sample file is empty: {expected_file}"
+            assert file_path.stat().st_size > 0, f"Sample file is empty: {expected_file}"
 
     def test_test_runner_legacy_compatibility(self):
         """Test that the old run_tests.py functionality is preserved."""
@@ -164,7 +144,7 @@ class TestRunner:
 
         # Check if run_tests.py exists - if so, verify it has expected functions
         if run_tests_file.exists():
-            with open(run_tests_file, 'r') as f:
+            with open(run_tests_file, "r") as f:
                 content = f.read()
 
             assert "def run_context_memory_tests" in content
@@ -181,10 +161,9 @@ class TestRunnerMetrics:
 
         # Check this class
         for name, method in inspect.getmembers(TestRunner, predicate=inspect.isfunction):
-            if name.startswith('test_'):
+            if name.startswith("test_"):
                 assert method.__doc__ is not None, f"Test method {name} missing docstring"
-                assert len(method.__doc__.strip()
-                           ) > 10, f"Test method {name} has inadequate docstring"
+                assert len(method.__doc__.strip()) > 10, f"Test method {name} has inadequate docstring"
 
     def test_pytest_markers_work(self):
         """Test that pytest markers are working correctly."""
@@ -197,22 +176,23 @@ class TestRunnerMetrics:
         test_mapping = {
             "integration": "integration/",
             "context_memory": "integration/test_context_memory_integration.py",
-            "csv_qa": "integration/test_csv_qa_integration.py"
+            "csv_qa": "integration/test_csv_qa_integration.py",
         }
 
         test_path = Path(__file__).parent / test_mapping[test_type]
-        assert test_path.exists(
-        ), f"Test category {test_type} not found at {test_path}"
+        assert test_path.exists(), f"Test category {test_type} not found at {test_path}"
 
 
 # Utility functions for backwards compatibility
 def run_context_memory_tests(verbose=False):
     """Legacy function to run context memory tests - now calls pytest."""
     cmd = [
-        "python", "-m", "pytest",
+        "python",
+        "-m",
+        "pytest",
         "tests/integration/test_context_memory_integration.py",
         "-v" if verbose else "--tb=short",
-        "--color=yes"
+        "--color=yes",
     ]
 
     result = subprocess.run(cmd)
@@ -248,10 +228,8 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Run tests (now via pytest)")
-    parser.add_argument("-t", "--type", default="all",
-                        help="Type of tests to run")
-    parser.add_argument("-v", "--verbose",
-                        action="store_true", help="Verbose output")
+    parser.add_argument("-t", "--type", default="all", help="Type of tests to run")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument("-s", "--specific", help="Specific test to run")
 
     args = parser.parse_args()

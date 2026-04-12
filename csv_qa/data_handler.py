@@ -1,6 +1,7 @@
 """
 CSV Data Handler module.
 """
+
 import logging
 
 import pandas as pd
@@ -153,9 +154,7 @@ class CSVDataHandler:
             raise ValueError("CSV not loaded. Call load_csv first.")
 
         if isinstance(value, str):
-            exact_matches = self.csv_dataframe[
-                self.csv_dataframe[column].astype(str).str.lower() == value.lower()
-            ]
+            exact_matches = self.csv_dataframe[self.csv_dataframe[column].astype(str).str.lower() == value.lower()]
 
             if not exact_matches.empty or exact_match:
                 return exact_matches
@@ -247,22 +246,16 @@ class CSVDataHandler:
                                 result_df = result_df[numeric_col == val]
                         except (ValueError, TypeError):
                             if op in ["=", "=="]:
-                                result_df = result_df[
-                                    result_df[col].astype(str).str.lower() == str(val).lower()
-                                ]
+                                result_df = result_df[result_df[col].astype(str).str.lower() == str(val).lower()]
                             elif op == "contains":
                                 result_df = result_df[
                                     result_df[col].astype(str).str.lower().str.contains(str(val).lower())
                                 ]
                     else:
                         if op in ["=", "=="]:
-                            result_df = result_df[
-                                result_df[col].astype(str).str.lower() == str(val).lower()
-                            ]
+                            result_df = result_df[result_df[col].astype(str).str.lower() == str(val).lower()]
                         elif op == "contains":
-                            result_df = result_df[
-                                result_df[col].astype(str).str.lower().str.contains(str(val).lower())
-                            ]
+                            result_df = result_df[result_df[col].astype(str).str.lower().str.contains(str(val).lower())]
                 except Exception as e:
                     logger.warning("Error applying filter %s: %s", filter_cond, e)
 
@@ -357,9 +350,7 @@ class CSVDataHandler:
 
         for col in self.csv_columns:
             try:
-                exact_matches = self.csv_dataframe[
-                    self.csv_dataframe[col].astype(str).str.lower() == value_str
-                ]
+                exact_matches = self.csv_dataframe[self.csv_dataframe[col].astype(str).str.lower() == value_str]
                 if not exact_matches.empty:
                     for idx, row in exact_matches.iterrows():
                         if idx not in matched_indices:
@@ -389,9 +380,7 @@ class CSVDataHandler:
 
         for value in values[1:]:
             if logical_operator.lower() == "or":
-                new_matches = self.search_value_in_all_columns(
-                    value, logical_or=True, previous_matches=result_df
-                )
+                new_matches = self.search_value_in_all_columns(value, logical_or=True, previous_matches=result_df)
                 result_df = new_matches
             elif logical_operator.lower() == "and":
                 new_matches = self.search_value_in_all_columns(value)
@@ -430,9 +419,7 @@ class CSVDataHandler:
             target_columns = df.select_dtypes(include=["number"]).columns.tolist()
         else:
             target_columns = [
-                col
-                for col in target_columns
-                if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
+                col for col in target_columns if col in df.columns and pd.api.types.is_numeric_dtype(df[col])
             ]
 
         if not target_columns:

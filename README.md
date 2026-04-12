@@ -2,6 +2,45 @@
 
 A Retrieval-Augmented Generation (RAG) system designed specifically for **small LLMs** (1B-8B parameters) to answer questions about CSV data. 
 
+## Quick Start with Docker
+
+Run the app without installing Python, Poetry, or Ollama:
+
+```bash
+git clone https://github.com/your-username/rag-on-csv.git
+cd rag-on-csv
+docker compose up
+```
+
+Open [http://localhost:8501](http://localhost:8501) in your browser. On first launch, the model download takes a few minutes — the UI shows the progress. After that, startup is instant.
+
+To stop: `docker compose down`
+
+### Choose Your Models
+
+The system uses two models: an **LLM** for answering questions and an **embedding model** for semantic search. Set them via environment variables:
+
+```bash
+# Default (small and fast)
+docker compose up
+
+# Use a larger LLM for better answers
+OLLAMA_MODEL=llama3.1:8b docker compose up
+
+# Use a different embedding model
+OLLAMA_EMBED_MODEL=mxbai-embed-large docker compose up
+
+# Combine both
+OLLAMA_MODEL=gemma3:4b OLLAMA_EMBED_MODEL=mxbai-embed-large docker compose up
+```
+
+| Model type | Default | Options |
+|---|---|---|
+| LLM (`OLLAMA_MODEL`) | `llama3.2:1b` | `llama3.2:3b`, `llama3.1:8b`, `gemma3:4b`, `gemma4:e2b`, `mistral`, `qwen3:8b` |
+| Embedding (`OLLAMA_EMBED_MODEL`) | `nomic-embed-text` | `mxbai-embed-large`, `all-minilm`, `snowflake-arctic-embed` |
+
+You can also download additional models from the web UI sidebar after the app starts.
+
 ## Features
 
 - **Web Interface**: Streamlit-based UI with drag & drop file upload, real-time configuration, and interactive chat
@@ -18,80 +57,6 @@ A Retrieval-Augmented Generation (RAG) system designed specifically for **small 
 - **Interactive Mode**: Fuzzy matching suggestions for typos and similar values
 
 
-## Prerequisites
-
-- Python 3.8+ (Python 3.11 recommended)
-- [Poetry](https://python-poetry.org/docs/#installation) for dependency management
-- [Ollama](https://ollama.ai/) running locally with the llama3.2:1b model (or another compatible model)
-
-## Installation
-
-1. Clone this repository:
-2. Set up Python environment with pyenv (if using):
-   ```bash
-   pyenv local 3.11.7
-   ```
-
-3. Configure Poetry to use the correct Python version:
-   ```bash
-   poetry env use python3.11
-   ```
-
-4. Install dependencies using Poetry:
-   ```bash
-   poetry install
-   ```
-
-5. Make sure Ollama is running:
-   ```bash
-   # Either run the desktop app or use the command line
-   ollama serve
-   ```
-
-6. Pull the required model:
-   ```bash
-   ollama pull llama3.2:1b
-   ```
-
-## Quick Start
-
-### Web Interface (Recommended)
-
-1. **Install dependencies:**
-   ```bash
-   poetry install
-   ```
-
-2. **Make sure Ollama is running:**
-   ```bash
-   # Start Ollama service
-   ollama serve
-   
-   # In another terminal, pull a model
-   ollama pull llama3.2:1b
-   ```
-
-3. **Launch the web interface:**
-   ```bash
-   poetry run streamlit run streamlit_app.py
-   ```
-
-4. **Open your browser:**
-   - Streamlit will automatically open your default browser
-   - Or manually go to: **http://localhost:8501**
-
-5. **Start using the app:**
-   - Upload a CSV file or select sample data from the sidebar
-   - Configure your preferred settings (model, features)
-   - Ask questions about your data!
-
-### Terminal Interface
-
-```bash
-poetry install
-poetry run python main.py
-```
-
 ## Multi-Engine Architecture
 
 The system now features an intelligent multi-engine architecture that automatically routes questions to the most appropriate processing engine:
@@ -104,13 +69,13 @@ Analyzes questions and routes them based on patterns:
 - **Complex patterns**: `"find anomalies in sales data"` → Hybrid Engine
 
 
-### **Enhanced Vector Search Engine**  
-CSV-aware semantic search with rich context:
+### **Semantic Search Engine**
+Neural embedding-based search powered by Ollama (replaces TF-IDF):
+- **Ollama embeddings**: Uses models like `nomic-embed-text` via `/api/embed`
+- **Adaptive chunking**: Sliding window size adapts to table width, no row cap
 - **Column descriptions**: Detailed metadata about each column
 - **Statistical summaries**: Mean, median, range, distribution info
 - **Categorical distributions**: Unique values and frequencies
-- **Relationship analysis**: Cross-column correlations and dependencies
-- **Data quality info**: Missing values, outliers, data types
 
 ### **Hybrid Engine**
 Combines multiple approaches with confidence scoring:
@@ -287,6 +252,30 @@ Match 1:
 ### Sample Data
 
 The project includes sample CSV files to test with. The enhanced system automatically adapts to any CSV structure and provides AI-generated suggestions based on your specific data.
+
+## Development
+
+Run lint, format, and tests via Docker (no local Python setup needed):
+
+```bash
+# Lint (auto-fix)
+docker compose run --rm lint
+
+# Format
+docker compose run --rm format
+
+# Test
+docker compose run --rm test
+```
+
+For local development without Docker:
+
+```bash
+poetry install
+poetry run ruff check --fix .
+poetry run ruff format .
+poetry run pytest
+```
 
 ## Troubleshooting
 

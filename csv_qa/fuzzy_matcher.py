@@ -1,6 +1,7 @@
 """
 Fuzzy Matching module for finding similar values in CSV data.
 """
+
 import difflib
 import logging
 
@@ -11,11 +12,11 @@ logger = logging.getLogger(__name__)
 
 class FuzzyMatcher:
     """Provides fuzzy matching capabilities to find similar values in CSV data."""
-        
+
     def calculate_similarity(self, str1, str2):
         """
         Calculate character-level similarity between two strings
-        
+
         Combines Jaccard similarity for character sets and sequence matching ratio
         """
         # Simple character overlap ratio
@@ -23,17 +24,17 @@ class FuzzyMatcher:
         chars2 = set(str2.lower())
         if not chars1 or not chars2:
             return 0
-        
+
         # Calculate Jaccard similarity for character sets
         intersection = len(chars1.intersection(chars2))
         union = len(chars1.union(chars2))
-        
+
         # Calculate character sequence similarity
         seq_sim = difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
-        
+
         # Combine both metrics
         return (intersection / union + seq_sim) / 2
-    
+
     def find_similar_values(self, search_term: str, df: pd.DataFrame) -> list:
         """
         Find similar values in the dataframe using multiple matching methods:
@@ -44,7 +45,7 @@ class FuzzyMatcher:
         """
         all_values = []
         original_values = {}
-        
+
         # Collect all string values from the dataframe
         for col in df.columns:
             for val in df[col].unique():
@@ -53,15 +54,15 @@ class FuzzyMatcher:
                     lower_val = str_val.lower()
                     all_values.append(lower_val)
                     original_values[lower_val] = str_val
-        
+
         results = set()
         search_term_lower = search_term.lower()
-        
+
         # Method 1: Use difflib for fuzzy matching with a lower cutoff
         similar_values = difflib.get_close_matches(search_term_lower, all_values, n=3, cutoff=0.4)
         for val in similar_values:
             results.add(original_values.get(val, val))
-        
+
         # Method 2: Check for substring matches (if the search term is at least 3 chars)
         if len(search_term_lower) >= 3:
             for lower_val, original_val in original_values.items():
@@ -70,18 +71,21 @@ class FuzzyMatcher:
                     results.add(original_val)
                     if len(results) >= 3:  # Limit to top 3 matches
                         break
-        
+
         # Method 3: Check for word-level matches (for multi-word values)
         search_words = set(search_term_lower.split())
         if len(search_words) > 0:
             for lower_val, original_val in original_values.items():
                 val_words = set(lower_val.split())
                 # If any word matches between search and value
-                if search_words.intersection(val_words) and len(search_words.intersection(val_words)) / len(search_words) > 0.5:
+                if (
+                    search_words.intersection(val_words)
+                    and len(search_words.intersection(val_words)) / len(search_words) > 0.5
+                ):
                     results.add(original_val)
                     if len(results) >= 3:  # Limit to top 3 matches
                         break
-        
+
         # Method 4: Special handling for names and short strings
         if len(search_term_lower) >= 3 and len(results) < 3:
             # For each value in the dataframe
@@ -93,13 +97,13 @@ class FuzzyMatcher:
                         similarity = self.calculate_similarity(search_term_lower, word)
                         if similarity > 0.6:  # Higher threshold for character-level similarity
                             similarity_scores.append((similarity, original_val))
-            
+
             # Add top matches by similarity
             for _, val in sorted(similarity_scores, reverse=True)[:3]:
                 results.add(val)
                 if len(results) >= 3:
                     break
-        
+
         if results:
             logger.debug("Found similar values for '%s': %s", search_term, results)
 

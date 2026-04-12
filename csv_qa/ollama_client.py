@@ -1,5 +1,6 @@
 import logging
 import json
+import os
 import re
 
 import requests
@@ -60,7 +61,8 @@ class OllamaAPIClient:
     def __init__(self, model_name: str = "llama3.2:1b") -> None:
         """Initialize the Ollama API client."""
         self.model_name = model_name
-        self.api_url = "http://localhost:11434/api/generate"
+        base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.api_url = f"{base_url}/api/generate"
 
     def set_model(self, model_name: str) -> None:
         """Set the model to use for API calls."""
@@ -221,9 +223,7 @@ class OllamaAPIClient:
             raise OllamaConnectionError(detail=str(e)) from e
 
         if response.status_code != 200:
-            raise OllamaResponseError(
-                detail=f"HTTP {response.status_code}: {response.text}"
-            )
+            raise OllamaResponseError(detail=f"HTTP {response.status_code}: {response.text}")
 
         return response
 
@@ -245,10 +245,7 @@ class OllamaAPIClient:
                             "LLM response too short or incomplete (%d chars), returning fallback",
                             len(content),
                         )
-                        return (
-                            "I don't have enough information to answer that "
-                            "question based on the CSV data provided."
-                        )
+                        return "I don't have enough information to answer that question based on the CSV data provided."
                     return content
 
                 logger.warning("Unexpected JSON format: missing 'response' key")
@@ -268,9 +265,7 @@ class OllamaAPIClient:
                 if full_response and len(full_response) > 10:
                     return full_response
 
-                raise OllamaResponseError(
-                    detail="Could not extract text from multi-line response"
-                )
+                raise OllamaResponseError(detail="Could not extract text from multi-line response")
 
         except OllamaResponseError:
             raise
