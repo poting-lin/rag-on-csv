@@ -4,7 +4,7 @@ CSV Question Answering Bot package
 
 import logging
 
-from .exceptions import (
+from csv_qa.exceptions import (
     CSVQAError,
     DataLoadError,
     OllamaError,

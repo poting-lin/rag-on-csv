@@ -8,7 +8,7 @@ from typing import Optional
 
 import pandas as pd
 
-from .exceptions import QueryResult
+from csv_qa.exceptions import QueryResult
 
 logger = logging.getLogger(__name__)
 

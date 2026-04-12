@@ -7,11 +7,11 @@ from typing import Any
 
 import pandas as pd
 
-from .data_handler import build_schema_card
-from .exceptions import QueryResult
-from .structured_query_engine import StructuredQueryEngine
-from .semantic_search import SemanticSearch
-from .ollama_client import OllamaAPIClient
+from csv_qa.data_handler import build_schema_card
+from csv_qa.exceptions import QueryResult
+from csv_qa.structured_query_engine import StructuredQueryEngine
+from csv_qa.semantic_search import SemanticSearch
+from csv_qa.ollama_client import OllamaAPIClient
 
 logger = logging.getLogger(__name__)
 

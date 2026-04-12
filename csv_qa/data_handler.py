@@ -6,7 +6,7 @@ import logging
 
 import pandas as pd
 
-from .exceptions import DataLoadError
+from csv_qa.exceptions import DataLoadError
 
 logger = logging.getLogger(__name__)
 

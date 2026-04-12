@@ -8,16 +8,16 @@ import re
 import json
 from collections import OrderedDict
 import pandas as pd
-from .data_handler import CSVDataHandler
-from .fuzzy_matcher import FuzzyMatcher
-from .question_parser import QuestionParser
-from .semantic_search import SemanticSearch
-from .ollama_client import OllamaAPIClient
-from .context_memory import ConversationContext
-from .question_router import QuestionRouter
-from .structured_query_engine import StructuredQueryEngine
-from .hybrid_engine import HybridCSVEngine
-from .exceptions import (
+from csv_qa.data_handler import CSVDataHandler
+from csv_qa.fuzzy_matcher import FuzzyMatcher
+from csv_qa.question_parser import QuestionParser
+from csv_qa.semantic_search import SemanticSearch
+from csv_qa.ollama_client import OllamaAPIClient
+from csv_qa.context_memory import ConversationContext
+from csv_qa.question_router import QuestionRouter
+from csv_qa.structured_query_engine import StructuredQueryEngine
+from csv_qa.hybrid_engine import HybridCSVEngine
+from csv_qa.exceptions import (
     OllamaConnectionError,
     OllamaTimeoutError,
     OllamaResponseError,

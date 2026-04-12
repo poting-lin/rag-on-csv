@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 
 import requests
 
-from .exceptions import (
+from csv_qa.exceptions import (
     OllamaConnectionError,
     OllamaTimeoutError,
     OllamaResponseError,

@@ -13,9 +13,9 @@ import numpy as np
 import pandas as pd
 import requests
 
-from .config import DEFAULT_EMBED_MODEL
-from .exceptions import OllamaConnectionError
-from .ollama_client import _with_retry
+from csv_qa.config import DEFAULT_EMBED_MODEL
+from csv_qa.exceptions import OllamaConnectionError
+from csv_qa.ollama_client import _with_retry
 
 logger = logging.getLogger(__name__)
 
